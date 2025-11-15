@@ -7,11 +7,10 @@ RUN apk add --no-cache \
     certbot-nginx \
     openssl
 
-# Создаем директории для certbot
-RUN mkdir -p /var/www/certbot /etc/letsencrypt
+# Создаем директории для certbot и конфигурации
+RUN mkdir -p /var/www/certbot /etc/letsencrypt /etc/nginx/conf.d
 
-# Копируем конфигурацию и скрипты
-COPY nginx.conf /etc/nginx/nginx.conf
+# Копируем скрипты
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 COPY generate-config.sh /etc/nginx/generate-config.sh
 
