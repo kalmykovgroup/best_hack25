@@ -84,12 +84,19 @@ services:
       - PYTHONUNBUFFERED=1
     networks:
       - app-network
+    # libpostal требует много памяти при загрузке данных
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
     healthcheck:
       test: ["CMD", "python", "-c", "import grpc; channel = grpc.insecure_channel('localhost:50052'); channel.close()"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 30s
     volumes:
       # Кэшируем данные libpostal для быстрого перезапуска
       - libpostal-data:/usr/local/share/libpostal
