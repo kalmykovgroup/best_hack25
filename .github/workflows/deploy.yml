@@ -14,20 +14,10 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Build React App
-      run: |
-        cd react-app
-        npm ci
-        npm run build:prod
-        cd ..
-
     - name: Create deployment archive
       run: |
-        # Создаем архив из git репозитория + собранный React
-        git archive --format=tar HEAD | tar -x -C /tmp/deploy
-        cp -r api/wwwroot /tmp/deploy/api/
-        tar -czf besthack25-deploy.tar.gz -C /tmp/deploy .
-        rm -rf /tmp/deploy
+        # Создаем архив из git репозитория (включая wwwroot)
+        git archive --format=tar.gz -o besthack25-deploy.tar.gz HEAD
 
     - name: Copy files to server
       uses: appleboy/scp-action@v0.1.7
@@ -51,8 +41,6 @@ jobs:
 
           # Переменные
           DEPLOY_DIR="/var/www/besthack25"
-          DOMAIN="${{ secrets.DOMAIN }}"
-          EMAIL="${{ secrets.SSL_EMAIL }}"
 
           # Создаем директорию если не существует
           mkdir -p $DEPLOY_DIR
@@ -75,10 +63,10 @@ jobs:
           cd $DEPLOY_DIR/current
 
           # Создаем .env файл (используем GitHub Secrets)
-          cat > .env << ENVEOF
+          cat > .env << 'ENVEOF'
           # Domain & SSL
-          DOMAIN=$DOMAIN
-          SSL_EMAIL=$EMAIL
+          DOMAIN=${{ secrets.DOMAIN }}
+          SSL_EMAIL=${{ secrets.SSL_EMAIL }}
           CERTBOT_STAGING=0
 
           # Nginx
@@ -116,10 +104,6 @@ jobs:
           echo "Building and starting containers..."
           docker compose up -d --build
 
-          # Ждем запуска сервисов
-          echo "Waiting for services to start..."
-          sleep 10
-
           # Проверяем статус
           echo "Checking container status..."
           docker compose ps
@@ -132,5 +116,3 @@ jobs:
           rm -f /tmp/besthack25-deploy.tar.gz
 
           echo "Deployment completed successfully!"
-          echo "Site available at: http://$DOMAIN"
-          echo "SSL will be configured automatically by nginx"
