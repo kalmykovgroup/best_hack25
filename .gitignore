@@ -62,6 +62,12 @@ publish/
 # React production build (генерируется из react-app)
 api/wwwroot/
 
+# Nginx auto-generated configs
+nginx/conf.d/*.conf
+
+# SSL certificates
+certbot/
+
 # Logs
 logs/
 *.log

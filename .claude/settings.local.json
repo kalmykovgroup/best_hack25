@@ -9,7 +9,11 @@
       "Bash(\".venv\\Scripts\\python.exe\" -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. geocode.proto)",
       "Bash(npm run build:prod:*)",
       "Bash(QUICK_START.md)",
-      "Bash(dotnet dev-certs:*)"
+      "Bash(dotnet dev-certs:*)",
+      "Bash(\"C:\\Users\\Apolon 1\\RiderProjects\\best_hack25\\nginx\\conf.d\\.gitkeep\")",
+      "Bash(\"C:\\Users\\Apolon 1\\RiderProjects\\best_hack25\\DEPLOY_README.md\")",
+      "Bash(echo:*)",
+      "Bash(SSH_SETUP.md)"
     ],
     "deny": [],
     "ask": []

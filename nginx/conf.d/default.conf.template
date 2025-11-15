@@ -1,0 +1,32 @@
+# Nginx configuration template
+# This file will be processed to generate actual config based on SSL availability
+# DOMAIN будет заменен на значение из переменной окружения
+
+# Upstream для ASP.NET Core API
+upstream api_backend {
+    server webapi:8080;
+    keepalive 32;
+}
+
+# HTTP Server - всегда активен
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN} www.${DOMAIN};
+
+    # ACME challenge для Let's Encrypt
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        try_files $uri =404;
+    }
+
+    # Если есть SSL - редирект на HTTPS
+    # Если нет SSL - проксируем на API
+    location / {
+        # SSL_REDIRECT_PLACEHOLDER
+        # Эта строка будет заменена в зависимости от наличия SSL
+    }
+}
+
+# HTTPS Server - активен только при наличии сертификата
+# SSL_SERVER_PLACEHOLDER

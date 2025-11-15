@@ -1,0 +1,136 @@
+name: Deploy to Linux Server (212.193.26.111)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Build React App
+      run: |
+        cd react-app
+        npm ci
+        npm run build:prod
+        cd ..
+
+    - name: Create deployment archive
+      run: |
+        # Создаем архив из git репозитория + собранный React
+        git archive --format=tar HEAD | tar -x -C /tmp/deploy
+        cp -r api/wwwroot /tmp/deploy/api/
+        tar -czf besthack25-deploy.tar.gz -C /tmp/deploy .
+        rm -rf /tmp/deploy
+
+    - name: Copy files to server
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.SSH_HOST }}
+        username: ${{ secrets.SSH_USERNAME }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: ${{ secrets.SSH_PORT }}
+        source: "besthack25-deploy.tar.gz"
+        target: "/tmp"
+
+    - name: Deploy with Docker Compose
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.SSH_HOST }}
+        username: ${{ secrets.SSH_USERNAME }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: ${{ secrets.SSH_PORT }}
+        script: |
+          set -e
+
+          # Переменные
+          DEPLOY_DIR="/var/www/besthack25"
+          DOMAIN="${{ secrets.DOMAIN }}"
+          EMAIL="${{ secrets.SSL_EMAIL }}"
+
+          # Создаем директорию если не существует
+          mkdir -p $DEPLOY_DIR
+
+          # Создаем бэкап предыдущей версии
+          if [ -d "$DEPLOY_DIR/current" ]; then
+            echo "Creating backup..."
+            rm -rf $DEPLOY_DIR/backup
+            mv $DEPLOY_DIR/current $DEPLOY_DIR/backup
+          fi
+
+          # Создаем новую директорию
+          mkdir -p $DEPLOY_DIR/current
+
+          # Распаковываем новую версию
+          echo "Extracting new version..."
+          tar -xzf /tmp/besthack25-deploy.tar.gz -C $DEPLOY_DIR/current
+
+          # Переходим в директорию проекта
+          cd $DEPLOY_DIR/current
+
+          # Создаем .env файл (используем GitHub Secrets)
+          cat > .env << ENVEOF
+          # Domain & SSL
+          DOMAIN=$DOMAIN
+          SSL_EMAIL=$EMAIL
+          CERTBOT_STAGING=0
+
+          # Nginx
+          NGINX_HTTP_PORT=80
+          NGINX_HTTPS_PORT=443
+
+          # ASP.NET Core
+          ASPNETCORE_ENVIRONMENT=Production
+
+          # Python Geocode Service
+          GEOCODE_SERVICE_PORT=50051
+          GEOCODE_SERVICE_GRPC_PORT=50051
+
+          # Address Parser Service
+          ADDRESS_PARSER_PORT=50052
+          ADDRESS_PARSER_GRPC_PORT=50052
+
+          # Service URLs
+          PYTHON_SERVICE_URL=http://geocode-service:50051
+          ADDRESS_PARSER_URL=http://address-parser:50052
+
+          # Performance
+          ENABLE_VERBOSE_LOGGING=0
+          GRPC_TIMEOUT_SECONDS=30
+          ENVEOF
+
+          # Создаем директории для certbot
+          mkdir -p certbot/www certbot/conf
+
+          # Останавливаем старые контейнеры
+          echo "Stopping old containers..."
+          docker compose down || true
+
+          # Собираем и запускаем новые контейнеры
+          echo "Building and starting containers..."
+          docker compose up -d --build
+
+          # Ждем запуска сервисов
+          echo "Waiting for services to start..."
+          sleep 10
+
+          # Проверяем статус
+          echo "Checking container status..."
+          docker compose ps
+
+          # Показываем логи
+          echo "Recent logs:"
+          docker compose logs --tail=50
+
+          # Очистка
+          rm -f /tmp/besthack25-deploy.tar.gz
+
+          echo "Deployment completed successfully!"
+          echo "Site available at: http://$DOMAIN"
+          echo "SSL will be configured automatically by nginx"
