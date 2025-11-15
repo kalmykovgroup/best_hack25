@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm create:*)",
+      "Bash(npm install)",
+      "Bash(npm run dev:*)",
+      "Bash(npm install:*)",
+      "Bash(dotnet run)",
+      "Bash(npm run build:*)",
+      "Bash(dotnet add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

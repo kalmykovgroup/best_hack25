@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  # API сервис (C# Web API)
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    ports:
+      - "${API_HTTP_PORT:-5000}:8080"
+      - "${API_HTTPS_PORT:-5001}:8081"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Development}
+      - ASPNETCORE_URLS=http://+:8080;https://+:8081
+      - PythonService__Url=${PYTHON_SERVICE_URL:-http://geocode-service:50051}
+      - AddressParserService__Url=${ADDRESS_PARSER_URL:-http://address-parser:50052}
+    depends_on:
+      geocode-service:
+        condition: service_healthy
+      address-parser:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  # Python Geocode сервис (поиск адресов)
+  geocode-service:
+    build:
+      context: ./python-search
+      dockerfile: Dockerfile
+    ports:
+      - "${GEOCODE_SERVICE_PORT:-50051}:50051"
+    environment:
+      - GRPC_PORT=${GEOCODE_SERVICE_GRPC_PORT:-50051}
+      - PYTHONUNBUFFERED=1
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import grpc; channel = grpc.insecure_channel('localhost:50051'); channel.close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Address Parser сервис (libpostal)
+  address-parser:
+    build:
+      context: ./address-parser
+      dockerfile: Dockerfile
+    ports:
+      - "${ADDRESS_PARSER_PORT:-50052}:50052"
+    environment:
+      - GRPC_PORT=${ADDRESS_PARSER_GRPC_PORT:-50052}
+      - PYTHONUNBUFFERED=1
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import grpc; channel = grpc.insecure_channel('localhost:50052'); channel.close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    volumes:
+      # Кэшируем данные libpostal для быстрого перезапуска
+      - libpostal-data:/usr/local/share/libpostal
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  libpostal-data:
+    driver: local

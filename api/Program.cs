@@ -1,0 +1,200 @@
+using Api.Grpc;
+using Api.Grpc.AddressParser;
+using Api.Hubs;
+using Api.Services.AddressParser;
+using Api.Services.Normalization;
+using Api.Services.RequestManagement;
+using Api.Services.Search;
+
+namespace api;
+
+public class Program
+{
+    public static async Task Main(string[] args)
+    {
+        var builder = WebApplication.CreateBuilder(args);
+
+        // Add services to the container.
+        builder.Services.AddControllers();
+        builder.Services.AddAuthorization();
+
+        // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
+        builder.Services.AddOpenApi();
+
+        // Настройка CORS для React приложения
+        var allowedOrigins = builder.Configuration.GetValue<string>("ALLOWED_ORIGINS")
+            ?? "http://localhost:5173,http://localhost:5174,http://localhost:3000";
+
+        builder.Services.AddCors(options =>
+        {
+            options.AddPolicy("ReactApp", policy =>
+            {
+                policy.WithOrigins(allowedOrigins.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                    .AllowAnyHeader()
+                    .AllowAnyMethod()
+                    .AllowCredentials(); // Важно для SignalR
+            });
+        });
+
+        // Настройка SignalR
+        var enableDetailedErrors = builder.Configuration.GetValue<bool?>("SIGNALR_ENABLE_DETAILED_ERRORS")
+            ?? builder.Environment.IsDevelopment();
+        var maxMessageSize = builder.Configuration.GetValue<int?>("SIGNALR_MAX_MESSAGE_SIZE") ?? 102400;
+
+        builder.Services.AddSignalR(options =>
+        {
+            options.EnableDetailedErrors = enableDetailedErrors;
+            options.MaximumReceiveMessageSize = maxMessageSize; // 100KB
+        });
+
+        // Настройка gRPC клиента для Python сервиса (геокодирование)
+        var pythonServiceUrl = builder.Configuration.GetValue<string>("PYTHON_SERVICE_URL")
+                               ?? builder.Configuration.GetValue<string>("PythonService:Url")
+                               ?? "http://localhost:50051";
+
+        builder.Services.AddGrpcClient<GeocodeService.GeocodeServiceClient>(options =>
+        {
+            options.Address = new Uri(pythonServiceUrl);
+        })
+        .ConfigurePrimaryHttpMessageHandler(() =>
+        {
+            // Настройка HTTP/2 для gRPC
+            var handler = new HttpClientHandler();
+
+            // В dev режиме разрешаем самоподписанные сертификаты
+            if (builder.Environment.IsDevelopment())
+            {
+                handler.ServerCertificateCustomValidationCallback =
+                    HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
+            }
+
+            return handler;
+        });
+
+        // Настройка gRPC клиента для Address Parser сервиса (нормализация адресов)
+        var addressParserServiceUrl = builder.Configuration.GetValue<string>("ADDRESS_PARSER_SERVICE_URL")
+                                      ?? builder.Configuration.GetValue<string>("AddressParserService:Url")
+                                      ?? "http://localhost:50052";
+
+        builder.Services.AddGrpcClient<AddressParserService.AddressParserServiceClient>(options =>
+        {
+            options.Address = new Uri(addressParserServiceUrl);
+        })
+        .ConfigurePrimaryHttpMessageHandler(() =>
+        {
+            var handler = new HttpClientHandler();
+
+            if (builder.Environment.IsDevelopment())
+            {
+                handler.ServerCertificateCustomValidationCallback =
+                    HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
+            }
+
+            return handler;
+        });
+
+        // Регистрация наших сервисов
+        builder.Services.AddScoped<IPythonSearchClient, PythonSearchClient>();
+        builder.Services.AddScoped<IAddressParserClient, AddressParserClient>();
+        builder.Services.AddSingleton<IActiveRequestsManager, ActiveRequestsManager>();
+        builder.Services.AddScoped<IAddressNormalizer, AddressNormalizer>();
+
+        var app = builder.Build();
+
+        // Проверка подключения к микросервисам при старте
+        await CheckMicroservicesHealthAsync(app);
+
+        // Configure the HTTP request pipeline.
+        if (app.Environment.IsDevelopment())
+        {
+            app.MapOpenApi();
+        }
+
+        app.UseHttpsRedirection();
+
+        // Применяем CORS перед авторизацией
+        app.UseCors("ReactApp");
+
+        // Поддержка статических файлов (React приложение)
+        app.UseDefaultFiles(); // Ищет index.html
+        app.UseStaticFiles();  // Обслуживает файлы из wwwroot
+
+        app.UseAuthorization();
+
+        // Маппинг Controllers
+        app.MapControllers();
+
+        // Маппинг SignalR Hub
+        app.MapHub<GeocodeHub>("/hubs/geocode");
+
+        // Health check endpoint
+        app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }))
+            .WithName("HealthCheck");
+
+        // SPA Fallback - все не-API запросы возвращают index.html (для React Router)
+        app.MapFallbackToFile("index.html");
+
+        app.Run();
+    }
+
+    /// <summary>
+    /// Проверяет подключение к микросервисам при старте приложения
+    /// </summary>
+    private static async Task CheckMicroservicesHealthAsync(WebApplication app)
+    {
+        var logger = app.Services.GetRequiredService<ILogger<Program>>();
+
+        logger.LogInformation("╔═══════════════════════════════════════════════════════════════════╗");
+        logger.LogInformation("║  🔍 ПРОВЕРКА ПОДКЛЮЧЕНИЯ К МИКРОСЕРВИСАМ                         ║");
+        logger.LogInformation("╚═══════════════════════════════════════════════════════════════════╝");
+
+        using var scope = app.Services.CreateScope();
+
+        // Проверка Python Geocode Service
+        try
+        {
+            var pythonClient = scope.ServiceProvider.GetRequiredService<IPythonSearchClient>();
+            var isPythonHealthy = await pythonClient.CheckHealthAsync();
+
+            if (isPythonHealthy)
+            {
+                logger.LogInformation("✅ Python Geocode Service (порт 50051):    ПОДКЛЮЧЕН");
+            }
+            else
+            {
+                logger.LogWarning("⚠️  Python Geocode Service (порт 50051):    НЕДОСТУПЕН");
+                logger.LogWarning("    Проверьте, что сервис запущен: python-search/grpc_server.py");
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogError("❌ Python Geocode Service (порт 50051):    ОШИБКА ПОДКЛЮЧЕНИЯ");
+            logger.LogError("    {Message}", ex.Message);
+        }
+
+        // Проверка Address Parser Service
+        try
+        {
+            var addressParserClient = scope.ServiceProvider.GetRequiredService<IAddressParserClient>();
+            var isAddressParserHealthy = await addressParserClient.CheckHealthAsync();
+
+            if (isAddressParserHealthy)
+            {
+                logger.LogInformation("✅ Address Parser Service (порт 50052):    ПОДКЛЮЧЕН");
+            }
+            else
+            {
+                logger.LogWarning("⚠️  Address Parser Service (порт 50052):    НЕДОСТУПЕН");
+                logger.LogWarning("    Проверьте, что сервис запущен: docker-compose up address-parser");
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogError("❌ Address Parser Service (порт 50052):    ОШИБКА ПОДКЛЮЧЕНИЯ");
+            logger.LogError("    {Message}", ex.Message);
+        }
+
+        logger.LogInformation("═══════════════════════════════════════════════════════════════════");
+        logger.LogInformation("");
+    }
+}

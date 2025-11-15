@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(dotnet build:*)",
+      "Bash(python generate_grpc.py:*)",
+      "Bash(python -m grpc_tools.protoc:*)",
+      "Bash(.venvScriptspython.exe -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. geocode.proto)",
+      "Bash(\".venv\\Scripts\\python.exe\" -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. geocode.proto)",
+      "Bash(npm run build:prod:*)",
+      "Bash(QUICK_START.md)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/pip.exe:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker-compose:*)",
+      "Bash(timeout 60 sleep:*)",
+      "Bash(nul)",
+      "Bash(exit 0)",
+      "Bash(timeout 90 sleep:*)",
+      "Bash(docker image:*)",
+      "Bash(findstr:*)",
+      "Bash(docker logs:*)",
+      "Bash(docker exec:*)",
+      "Bash(timeout 10 sleep:*)",
+      "Bash(python test_russian.py:*)",
+      "Bash(docker cp:*)",
+      "WebFetch(domain:www.alta.ru)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
