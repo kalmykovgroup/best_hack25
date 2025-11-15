@@ -67,7 +67,7 @@ const initialState: SearchState = {
   error: null,
   progress: null,
 
-  cacheEnabled: true,
+  cacheEnabled: false,
   cacheStats: {
     hits: 0,
     misses: 0,

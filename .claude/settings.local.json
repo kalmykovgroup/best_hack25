@@ -13,7 +13,11 @@
       "Bash(\"C:\\Users\\Apolon 1\\RiderProjects\\best_hack25\\nginx\\conf.d\\.gitkeep\")",
       "Bash(\"C:\\Users\\Apolon 1\\RiderProjects\\best_hack25\\DEPLOY_README.md\")",
       "Bash(echo:*)",
-      "Bash(SSH_SETUP.md)"
+      "Bash(SSH_SETUP.md)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git update-index:*)"
     ],
     "deny": [],
     "ask": []

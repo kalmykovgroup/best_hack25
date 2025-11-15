@@ -7,7 +7,10 @@
       "Bash(npm install:*)",
       "Bash(dotnet run)",
       "Bash(npm run build:*)",
-      "Bash(dotnet add:*)"
+      "Bash(dotnet add:*)",
+      "Bash(git stash:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(git restore:*)"
     ],
     "deny": [],
     "ask": []

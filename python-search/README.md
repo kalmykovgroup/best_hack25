@@ -1,88 +1,85 @@
-# Python gRPC Service для геокодирования
+# Python gRPC Geocode Service
 
-Тестовый Python gRPC сервис для обработки запросов на поиск адресов.
+Сервис для поиска адресов на основе данных OpenStreetMap с использованием BM25 поиска.
 
-## Варианты запуска
+## Технологии
 
-### Вариант 1: Docker (рекомендуется)
+- **gRPC** - API протокол
+- **BM25** - алгоритм поиска
+- **libpostal** - парсинг и нормализация адресов
+- **PyOSM** - работа с OSM данными
+- **Pandas/GeoPandas** - обработка данных
 
-Из корневой директории проекта:
+## Структура
+
+- `geocode.proto` - Protobuf контракт
+- `grpc_server.py` - Реализация gRPC сервера
+- `generate_grpc.py` - Генерация Python кода из .proto
+- `Dockerfile` - Docker образ
+- `10-moscow.osm.pbf` - Данные OpenStreetMap для Москвы
+
+## Запуск в Docker
+
 ```bash
-docker-compose up -d
+# Собрать образ
+docker build -t geocode-service .
+
+# Запустить контейнер
+docker run -d -p 50051:50051 --name geocode-service geocode-service
+
+# Логи
+docker logs -f geocode-service
 ```
 
-См. **[DOCKER_README.md](DOCKER_README.md)** для подробностей.
+## Запуск локально
 
-### Вариант 2: Локально в PyCharm
-
-См. **[PYCHARM_GUIDE.md](PYCHARM_GUIDE.md)** или **[QUICK_START_PYCHARM.md](QUICK_START_PYCHARM.md)**.
-
-### Вариант 3: Локальный запуск (командная строка)
-
-## Установка (для локального запуска)
-
-1. Активируйте виртуальное окружение (если есть):
 ```bash
-.venv\Scripts\activate  # Windows
-source .venv/bin/activate  # Linux/Mac
-```
+# Установить зависимости
+pip install grpcio grpcio-tools protobuf pandas geopandas pyrosm bm25s postal autocorrect
 
-2. Установите зависимости:
-```bash
-pip install grpcio grpcio-tools protobuf
-```
-
-**Важно**: Если у вас Python 3.13, используйте команду выше вместо `pip install -r requirements.txt`
-
-3. Сгенерируйте gRPC код из .proto файла:
-```bash
+# Сгенерировать gRPC код
 python generate_grpc.py
-```
 
-## Запуск
-
-Запустите сервер:
-```bash
+# Запустить сервер
 python grpc_server.py
 ```
 
-Сервер будет слушать на порту **50051**.
+**Примечание:** Для локального запуска требуется установленный libpostal.
 
-## Тестирование
+## API
 
-Вы можете протестировать сервис с помощью grpcurl:
+### SearchAddress
+Поиск адресов по нормализованной строке.
 
-```bash
-# Поиск адреса
-grpcurl -plaintext -d '{"normalized_query": "Москва", "limit": 5, "request_id": "test"}' localhost:50051 geocode.GeocodeService/SearchAddress
-
-# Health check
-grpcurl -plaintext localhost:50051 geocode.GeocodeService/HealthCheck
+**Запрос:**
+```protobuf
+message SearchAddressRequest {
+  string normalized_query = 1;
+  int32 limit = 2;
+  string request_id = 3;
+  SearchOptions options = 4;
+}
 ```
 
-## Структура файлов
+**Ответ:**
+```protobuf
+message SearchAddressResponse {
+  ResponseStatus status = 1;
+  string searched_address = 2;
+  repeated AddressObject objects = 3;
+  int32 total_found = 4;
+  ResponseMetadata metadata = 5;
+}
+```
 
-- `geocode.proto` - Protobuf контракт (скопирован из C# проекта)
-- `generate_grpc.py` - Скрипт для генерации Python кода из .proto
-- `grpc_server.py` - Реализация gRPC сервера
-- `geocode_pb2.py` - Сгенерированный Protobuf код (создается автоматически)
-- `geocode_pb2_grpc.py` - Сгенерированный gRPC код (создается автоматически)
-- `Dockerfile` - Конфигурация Docker образа
-- `.dockerignore` - Исключения для Docker build
+### HealthCheck
+Проверка работоспособности сервиса.
 
-## Документация
+## Переменные окружения
 
-- **[DOCKER_README.md](DOCKER_README.md)** - Запуск в Docker
-- **[PYCHARM_GUIDE.md](PYCHARM_GUIDE.md)** - Полное руководство по PyCharm
-- **[QUICK_START_PYCHARM.md](QUICK_START_PYCHARM.md)** - Быстрый старт в PyCharm
+- `PBF_PATH` - путь к OSM PBF файлу (по умолчанию: `/data/10-moscow.osm.pbf`)
+- `GRPC_PORT` - порт gRPC сервера (по умолчанию: `50051`)
 
-## Тестовые данные
+## Интеграция
 
-Сервис возвращает тестовые данные с адресами:
-- Москва, Тверская улица, 7
-- Москва, Красная площадь, 1
-- Москва, проспект Мира, 119
-- Санкт-Петербург, Невский проспект, 28
-- Москва, улица Арбат, 10
-
-В реальной версии тестовые данные будут заменены на подключение к базе данных.
+Сервис интегрирован в `docker-compose.yaml` как `geocode-service` и доступен по адресу `geocode-service:50051` для других контейнеров.

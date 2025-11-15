@@ -1,21 +1,13 @@
 FROM python:3.11-slim
 
-# System dependencies for geopandas, pyrosm, libpostal, etc.
+# System dependencies for geopandas, pyrosm, libpostal
 RUN apt-get update && apt-get install -y \
     build-essential \
     libspatialindex-dev \
     libgeos-dev \
     libproj-dev proj-bin proj-data \
     gdal-bin libgdal-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-
-
-# Устанавливаем необходимые системные зависимости для сборки libpostal
-RUN apt-get update && apt-get install -y \
     curl \
-    build-essential \
     autoconf \
     automake \
     libtool \
@@ -23,7 +15,9 @@ RUN apt-get update && apt-get install -y \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Скачиваем и устанавливаем libpostal
+WORKDIR /app
+
+# Install and build libpostal
 RUN git clone https://github.com/openvenues/libpostal /libpostal && \
     cd /libpostal && \
     ./bootstrap.sh && \
@@ -34,10 +28,12 @@ RUN git clone https://github.com/openvenues/libpostal /libpostal && \
     cd / && \
     rm -rf /libpostal
 
-
-    # Install Python dependencies
-RUN pip install --no-cache-dir \
-    grpcio grpcio-tools \
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+    grpcio \
+    grpcio-tools \
+    protobuf \
     pandas \
     geopandas \
     pyrosm \
@@ -45,16 +41,24 @@ RUN pip install --no-cache-dir \
     postal \
     autocorrect
 
-# Copy your gRPC code and generated proto stubs
-# (make sure these files exist in your build context)
-COPY grpc_server.py geocode_pb2.py geocode_pb2_grpc.py ./
+# Copy proto file and generate gRPC code
+COPY geocode.proto ./
+RUN python -m grpc_tools.protoc \
+    -I. \
+    --python_out=. \
+    --grpc_python_out=. \
+    geocode.proto
 
-# Copy OSM PBF (or mount as volume in docker run instead)
-# You can remove this and mount with -v if you prefer
+# Copy application code
+COPY grpc_server.py ./
+
+# Copy OSM PBF file (you can also mount it as volume with -v)
 COPY 10-moscow.osm.pbf /data/10-moscow.osm.pbf
 
+# Environment variables
 ENV PBF_PATH=/data/10-moscow.osm.pbf
 ENV GRPC_PORT=50051
+ENV PYTHONUNBUFFERED=1
 
 EXPOSE 50051
 

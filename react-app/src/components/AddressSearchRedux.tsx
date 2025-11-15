@@ -143,11 +143,11 @@ export const AddressSearchRedux = ({ onSelectResult }: AddressSearchReduxProps) 
     onSelectResult?.(result);
   };
 
-  const handleClearCache = () => {
-    dispatch(clearCache());
-  };
-
   const handleToggleCache = () => {
+    // При отключении кеша - очищаем его
+    if (cacheEnabled) {
+      dispatch(clearCache());
+    }
     dispatch(toggleCache());
   };
 
@@ -193,6 +193,15 @@ export const AddressSearchRedux = ({ onSelectResult }: AddressSearchReduxProps) 
             />
             {isSearching && <div className="search-spinner" />}
           </div>
+
+          <label className="cache-checkbox">
+            <input
+              type="checkbox"
+              checked={cacheEnabled}
+              onChange={handleToggleCache}
+            />
+            <span>Кэш</span>
+          </label>
         </div>
 
         {error && (
@@ -237,35 +246,17 @@ export const AddressSearchRedux = ({ onSelectResult }: AddressSearchReduxProps) 
           </div>
         )}
 
-        <div className="search-footer">
+        {results.length > 0 && (
           <div className="search-info">
-            {results.length > 0 && (
-              <span>
-                Найдено: {results.length}
-                {totalFound > results.length && ` из ${totalFound}`}
-              </span>
-            )}
+            <span>
+              Найдено: {results.length}
+              {totalFound > results.length && ` из ${totalFound}`}
+            </span>
             {showCacheHit && cacheEnabled && (
               <span className="cache-hit-indicator">⚡ Из кэша</span>
             )}
           </div>
-
-          <div className="cache-controls">
-            <label className="cache-checkbox">
-              <input
-                type="checkbox"
-                checked={cacheEnabled}
-                onChange={handleToggleCache}
-              />
-              <span>Кэш</span>
-            </label>
-            {cacheEnabled && (
-              <button onClick={handleClearCache} className="clear-cache-btn" title="Очистить кэш">
-                ✕
-              </button>
-            )}
-          </div>
-        </div>
+        )}
       </div>
     </>
   );

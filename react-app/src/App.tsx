@@ -15,7 +15,7 @@ function App() {
 
   return (
     <div className="app">
-      <h1>Поиск адресов</h1>
+      <h1>BEST HACK</h1>
 
       <AddressSearchRedux onSelectResult={handleSelectResult} />
 
