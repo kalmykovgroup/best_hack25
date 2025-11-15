@@ -1,343 +1,353 @@
-"""
-Тестовый Python gRPC сервис для геокодирования
-Обновлено под новую структуру API
-"""
-import logging
+import os
 import time
+import logging
 from concurrent import futures
-import sys
-import io
+
 import grpc
+import pandas as pd
+from pyrosm import OSM
+from postal.expand import expand_address
+from postal.parser import parse_address
+from autocorrect import Speller
+import bm25s
+
 import geocode_pb2
 import geocode_pb2_grpc
 
-# Исправляем кодировку для Windows
-if sys.platform == 'win32':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
-
-# Настройка логирования
+# -----------------------------------------------------------------------------
+# Basic logging
+# -----------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format="%(asctime)s %(levelname)s %(message)s",
 )
 logger = logging.getLogger(__name__)
 
+# -----------------------------------------------------------------------------
+# Address / BM25 helpers
+# -----------------------------------------------------------------------------
+
+ADDR_COLS = [
+    "addr:country",
+    "addr:postcode",
+    "addr:city",
+    "addr:place",
+    "addr:street",
+    "addr:housenumber",
+    "addr:housename",
+]
+
+
+def build_address(row: pd.Series) -> str | None:
+    """Build a human-readable address string from OSM address tags."""
+    if pd.notnull(row.get("addr:full")):
+        return str(row["addr:full"])
+
+    parts = []
+    for col in ADDR_COLS:
+        val = row.get(col)
+        if pd.notnull(val) and val != "":
+            parts.append(str(val))
+
+    return ", ".join(parts) if parts else None
+
+
+def normalized_forms(text: str) -> list[str]:
+    """Libpostal expansions limited to Russian; fallback to original text."""
+    if not isinstance(text, str):
+        return []
+    try:
+        expansions = expand_address(text, languages=["ru"]) or []
+    except Exception:
+        expansions = []
+    if not expansions:
+        expansions = [text]
+    return expansions
+
+
+def parse_libpostal_components(text: str) -> dict:
+    """
+    Convert libpostal parse_address result into a dict:
+    {label: component}.
+    """
+    try:
+        parts = parse_address(text)
+    except Exception:
+        return {}
+
+    # parse_address returns list of (component, label)
+    return {label: component for component, label in parts}
+
+
+def setup_geocoder(pbf_path: str):
+    """
+    Setup function:
+    - loads OSM PBF
+    - extracts buildings
+    - builds address index
+    - builds BM25 retriever
+    Returns: (index_df, retriever, spell)
+    """
+    logger.info("Loading OSM data from %s", pbf_path)
+    osm = OSM(pbf_path)
+    buildings = osm.get_buildings()
+
+    df = buildings.copy()
+    # Primary key
+    df["building_pk"] = df.index
+
+    # Geometry → lon/lat
+    df["lon"] = df.geometry.centroid.x
+    df["lat"] = df.geometry.centroid.y
+
+    # Build raw address
+    df["raw_address"] = df.apply(build_address, axis=1)
+    df = df[df["raw_address"].notna()].reset_index(drop=True)
+
+    # Build index table: one row per (building, normalized_string)
+    index_rows = []
+    for idx, row in df.iterrows():
+        expansions = normalized_forms(row["raw_address"])
+        for norm in set(expansions):
+            index_rows.append(
+                {
+                    "building_pk": idx,
+                    "norm_address": norm,
+                    "lon": row["lon"],
+                    "lat": row["lat"],
+                }
+            )
+
+    index_df = pd.DataFrame(index_rows)
+
+    # BM25 index
+    corpus = index_df["norm_address"].tolist()
+    corpus_tokens = bm25s.tokenize(corpus)
+
+    retriever = bm25s.BM25()
+    retriever.index(corpus_tokens)
+
+    spell = Speller("ru")
+
+    logger.info("Geocoder index built: %d documents", len(index_df))
+    return index_df, retriever, spell
+
+
+def process_query(
+    query: str,
+    index_df: pd.DataFrame,
+    retriever: bm25s.BM25,
+    spell: Speller,
+    limit: int = 10,
+):
+    """
+    Process function:
+    - expands & spell-corrects query
+    - runs BM25 retrieval
+    - returns list of matches with normalized scores [0,1]
+    Each match: {
+        "rank", "score", "norm_address", "building_pk", "lon", "lat"
+    }
+    """
+    if not query:
+        return []
+
+    try:
+        expansions = expand_address(query, languages=["ru"]) or []
+    except Exception:
+        expansions = []
+
+    if not expansions:
+        expansions = [query]
+
+    q_norms = [spell(text) for text in expansions]
+
+    # Use first normalized variant for now
+    query_str = q_norms[0]
+    query_tokens = bm25s.tokenize(query_str)
+
+    # Retrieve
+    k = max(limit, 1)
+    results, scores = retriever.retrieve(query_tokens, k=k)
+
+    if results.size == 0:
+        return []
+
+    raw_scores = scores[0]
+    max_score = float(raw_scores.max()) if raw_scores.size > 0 else 0.0
+
+    matches = []
+    n_results = results.shape[1]
+    for i in range(n_results):
+        doc_id = int(results[0, i])
+        raw_score = float(raw_scores[i])
+        norm_score = raw_score / max_score if max_score > 0 else 0.0
+
+        row = index_df.iloc[doc_id]
+        matches.append(
+            {
+                "rank": i + 1,
+                "score": norm_score,
+                "norm_address": row["norm_address"],
+                "building_pk": int(row["building_pk"]),
+                "lon": float(row["lon"]),
+                "lat": float(row["lat"]),
+            }
+        )
+
+    return matches
+
+
+# -----------------------------------------------------------------------------
+# gRPC servicer
+# -----------------------------------------------------------------------------
 
 class GeocodeServicer(geocode_pb2_grpc.GeocodeServiceServicer):
     """
-    Реализация gRPC сервиса геокодирования
+    BM25-based geocoder backed by OSM buildings.
+    Uses the API scheme from the provided prototype (SearchAddress, HealthCheck).
     """
 
-    def __init__(self):
+    def __init__(self, pbf_path: str | None = None):
         self.start_time = time.time()
-        # Тестовые данные (в реальной версии будет база данных)
-        self.mock_data = [
-            {
-                "locality": "Москва",
-                "street": "Тверская улица",
-                "number": "7",
-                "lon": 37.615560,
-                "lat": 55.757814,
-                "score": 0.95,
-                "postal_code": "125009",
-                "district": "Тверской район",
-                "full_address": "Москва, Тверская улица, 7"
-            },
-            {
-                "locality": "Москва",
-                "street": "Красная площадь",
-                "number": "1",
-                "lon": 37.621211,
-                "lat": 55.753544,
-                "score": 0.98,
-                "postal_code": "109012",
-                "district": "Тверской район",
-                "full_address": "Москва, Красная площадь, 1"
-            },
-            {
-                "locality": "Москва",
-                "street": "проспект Мира",
-                "number": "119",
-                "lon": 37.639600,
-                "lat": 55.822144,
-                "score": 0.92,
-                "postal_code": "129223",
-                "district": "Останкинский район",
-                "full_address": "Москва, проспект Мира, 119"
-            },
-            {
-                "locality": "Санкт-Петербург",
-                "street": "Невский проспект",
-                "number": "28",
-                "lon": 30.324116,
-                "lat": 59.935493,
-                "score": 0.90,
-                "postal_code": "191186",
-                "district": "Центральный район",
-                "full_address": "Санкт-Петербург, Невский проспект, 28"
-            },
-            {
-                "locality": "Москва",
-                "street": "улица Арбат",
-                "number": "10",
-                "lon": 37.593434,
-                "lat": 55.750446,
-                "score": 0.88,
-                "postal_code": "119019",
-                "district": "Арбат",
-                "full_address": "Москва, улица Арбат, 10"
-            },
-        ]
+        self.pbf_path = pbf_path or os.environ.get("PBF_PATH", "10-moscow.osm.pbf")
+
+        self.index_df, self.retriever, self.spell = setup_geocoder(self.pbf_path)
 
     def SearchAddress(self, request, context):
-        """
-        Обработка запроса на поиск адреса
-        """
         start_time = time.time()
 
-        # Детальное логирование входящего запроса
-        logger.info("=" * 80)
-        logger.info(f"📨 ВХОДЯЩИЙ ЗАПРОС [request_id={request.request_id}]")
-        logger.info("-" * 80)
-        logger.info(f"🔤 Оригинальный запрос:     '{request.original_query}'")
-        logger.info(f"✨ Нормализованный запрос:  '{request.normalized_query}'")
-        logger.info(f"📊 Лимит результатов:       {request.limit}")
+        # Prefer normalized_query, fallback to original_query
+        query = request.normalized_query or request.original_query
+        query = query.strip()
 
-        # Логирование опций поиска
-        if request.options:
-            logger.info(f"⚙️  Опции поиска:")
-            logger.info(f"   • min_score_threshold:  {request.options.min_score_threshold}")
-            logger.info(f"   • enable_fuzzy_search:  {request.options.enable_fuzzy_search}")
-            if request.options.locality_filter:
-                logger.info(f"   • locality_filter:      '{request.options.locality_filter}'")
-
-        # Логирование структурированных компонентов адреса
-        if request.parsed_components:
-            components = request.parsed_components
-            logger.info(f"🏗️  Структурированные компоненты (libpostal):")
-
-            # Основные компоненты
-            if components.city:
-                logger.info(f"   • Город:                '{components.city}'")
-            if components.road:
-                logger.info(f"   • Улица:                '{components.road}'")
-            if components.house_number:
-                logger.info(f"   • Номер дома:           '{components.house_number}'")
-
-            # Дополнительные компоненты
-            if components.unit:
-                logger.info(f"   • Квартира/Офис:        '{components.unit}'")
-            if components.level:
-                logger.info(f"   • Этаж:                 '{components.level}'")
-            if components.staircase:
-                logger.info(f"   • Подъезд:              '{components.staircase}'")
-            if components.entrance:
-                logger.info(f"   • Вход:                 '{components.entrance}'")
-
-            # Административные компоненты
-            if components.suburb:
-                logger.info(f"   • Район/Микрорайон:     '{components.suburb}'")
-            if components.city_district:
-                logger.info(f"   • Округ города:         '{components.city_district}'")
-            if components.state:
-                logger.info(f"   • Регион/Область:       '{components.state}'")
-            if components.country:
-                logger.info(f"   • Страна:               '{components.country}'")
-
-            # Почтовый индекс
-            if components.postcode:
-                logger.info(f"   • Почтовый индекс:      '{components.postcode}'")
-        else:
-            logger.info(f"⚠️  Структурированные компоненты отсутствуют (fallback на строковый поиск)")
-
-        logger.info("=" * 80)
-
-        try:
-            # Логика поиска с использованием структурированных компонентов
-            components = request.parsed_components
-            query_lower = request.normalized_query.lower()
-            original_lower = request.original_query.lower() if request.original_query else query_lower
-            results = []
-
-            # Извлекаем компоненты адреса для более точного поиска
-            search_city = components.city.lower() if components and components.city else ""
-            search_road = components.road.lower() if components and components.road else ""
-            search_house = components.house_number.lower() if components and components.house_number else ""
-
-            logger.debug(
-                f"Поиск по компонентам: city='{search_city}', road='{search_road}', house='{search_house}'"
-            )
-
-            for item in self.mock_data:
-                # Приоритет 1: Поиск по структурированным компонентам (если есть)
-                if components and (search_city or search_road or search_house):
-                    # Точное совпадение по компонентам дает высокий score
-                    city_match = search_city and search_city in item["locality"].lower()
-                    road_match = search_road and search_road in item["street"].lower()
-                    house_match = search_house and search_house in item["number"].lower()
-
-                    if city_match or road_match or house_match:
-                        # Повышаем score при совпадении компонентов
-                        adjusted_score = item["score"]
-                        if city_match and road_match and house_match:
-                            adjusted_score = min(1.0, item["score"] + 0.1)  # Все 3 компонента
-                        elif (city_match and road_match) or (city_match and house_match):
-                            adjusted_score = min(1.0, item["score"] + 0.05)  # 2 компонента
-
-                        # Создаем дополнительную информацию
-                        additional_info = geocode_pb2.AdditionalInfo(
-                            postal_code=item.get("postal_code", ""),
-                            district=item.get("district", ""),
-                            full_address=item["full_address"],
-                            object_id=f"obj_{len(results) + 1}"
-                        )
-
-                        # Создаем адресный объект
-                        address_object = geocode_pb2.AddressObject(
-                            locality=item["locality"],
-                            street=item["street"],
-                            number=item["number"],
-                            lon=item["lon"],
-                            lat=item["lat"],
-                            score=adjusted_score,
-                            additional_info=additional_info
-                        )
-
-                        results.append(address_object)
-                        continue
-
-                # Приоритет 2: Fallback на поиск по строкам (если компоненты не дали результатов)
-                if (query_lower in item["locality"].lower() or
-                    query_lower in item["street"].lower() or
-                    query_lower in item["full_address"].lower() or
-                    original_lower in item["locality"].lower() or
-                    original_lower in item["street"].lower() or
-                    original_lower in item["full_address"].lower()):
-
-                    # Создаем дополнительную информацию
-                    additional_info = geocode_pb2.AdditionalInfo(
-                        postal_code=item.get("postal_code", ""),
-                        district=item.get("district", ""),
-                        full_address=item["full_address"],
-                        object_id=f"obj_{len(results) + 1}"
-                    )
-
-                    # Создаем адресный объект
-                    address_object = geocode_pb2.AddressObject(
-                        locality=item["locality"],
-                        street=item["street"],
-                        number=item["number"],
-                        lon=item["lon"],
-                        lat=item["lat"],
-                        score=item["score"],
-                        additional_info=additional_info
-                    )
-
-                    results.append(address_object)
-
-            # Сортируем по релевантности
-            results.sort(key=lambda x: x.score, reverse=True)
-
-            # Применяем фильтр по минимальному score (если указан)
-            if request.options and request.options.min_score_threshold > 0:
-                results = [r for r in results if r.score >= request.options.min_score_threshold]
-
-            # Ограничиваем количество результатов
-            if request.limit > 0:
-                results = results[:request.limit]
-
-            execution_time_ms = int((time.time() - start_time) * 1000)
-
-            # Детальное логирование результатов
-            logger.info("-" * 80)
-            logger.info(f"✅ РЕЗУЛЬТАТЫ ПОИСКА [request_id={request.request_id}]")
-            logger.info(f"   • Найдено результатов:  {len(results)}")
-            logger.info(f"   • Время выполнения:     {execution_time_ms}ms")
-
-            if results:
-                logger.info(f"   • Топ результатов:")
-                for idx, result in enumerate(results[:3], 1):  # Показываем топ-3
-                    logger.info(
-                        f"     {idx}. {result.locality}, {result.street}, {result.number} "
-                        f"(score: {result.score:.2f})"
-                    )
-            else:
-                logger.warning(f"   ⚠️ Ничего не найдено!")
-
-            logger.info("=" * 80)
-
-            # Возвращаем ответ (searched_address содержит нормализованный запрос)
+        if not query:
+            exec_ms = int((time.time() - start_time) * 1000)
             return geocode_pb2.SearchAddressResponse(
                 status=geocode_pb2.ResponseStatus(
                     code=geocode_pb2.StatusCode.OK,
-                    message="Поиск выполнен успешно"
+                    message="Empty query",
                 ),
-                searched_address=request.normalized_query,
-                objects=results,
-                total_found=len(results),
+                searched_address="",
+                objects=[],
+                total_found=0,
                 metadata=geocode_pb2.ResponseMetadata(
-                    execution_time_ms=execution_time_ms,
+                    execution_time_ms=exec_ms,
                     timestamp=int(time.time()),
-                    engine_version="1.0.0-mock"
-                )
+                    engine_version="bm25-osm-1.0",
+                ),
             )
 
-        except Exception as e:
-            logger.error("=" * 80)
-            logger.error(f"❌ ОШИБКА ПРИ ОБРАБОТКЕ ЗАПРОСА [request_id={request.request_id}]")
-            logger.error(f"   • Тип ошибки: {type(e).__name__}")
-            logger.error(f"   • Сообщение:  {str(e)}")
-            logger.error("=" * 80, exc_info=True)
-            return geocode_pb2.SearchAddressResponse(
-                status=geocode_pb2.ResponseStatus(
-                    code=geocode_pb2.StatusCode.INTERNAL_ERROR,
-                    message=f"Внутренняя ошибка сервера",
-                    details=str(e)
-                ),
-                searched_address=request.normalized_query,
-                objects=[],
-                total_found=0
+        limit = request.limit if request.limit > 0 else 10
+        matches = process_query(
+            query,
+            self.index_df,
+            self.retriever,
+            self.spell,
+            limit=limit,
+        )
+
+        # Convert BM25 matches to AddressObject list
+        objects = []
+        for m in matches:
+            components = parse_libpostal_components(m["norm_address"])
+
+            locality = components.get("city", "")
+            street = components.get("road", "")
+            number = components.get("house_number", "")
+            postal_code = components.get("postcode", "")
+            district = components.get("suburb", "") or components.get(
+                "city_district", ""
             )
+
+            additional_info = geocode_pb2.AdditionalInfo(
+                postal_code=postal_code,
+                district=district,
+                full_address=m["norm_address"],
+                object_id=str(m["building_pk"]),
+            )
+
+            obj = geocode_pb2.AddressObject(
+                locality=locality,
+                street=street,
+                number=number,
+                lon=m["lon"],
+                lat=m["lat"],
+                score=m["score"],
+                additional_info=additional_info,
+            )
+            objects.append(obj)
+
+        # Apply options (basic)
+        if request.options:
+            # Min score threshold
+            if request.options.min_score_threshold > 0:
+                thr = request.options.min_score_threshold
+                objects = [o for o in objects if o.score >= thr]
+
+            # Locality filter (simple substring match)
+            if request.options.locality_filter:
+                lf = request.options.locality_filter.strip().lower()
+                if lf:
+                    objects = [
+                        o for o in objects if lf in o.locality.lower()
+                    ]
+
+            # enable_fuzzy_search is currently ignored; BM25 already does fuzzy-ish matching.
+
+        # Enforce limit again after filtering
+        if request.limit > 0:
+            objects = objects[: request.limit]
+
+        exec_ms = int((time.time() - start_time) * 1000)
+        logger.info("SearchAddress '%s' -> %d results in %d ms", query, len(objects), exec_ms)
+
+        return geocode_pb2.SearchAddressResponse(
+            status=geocode_pb2.ResponseStatus(
+                code=geocode_pb2.StatusCode.OK,
+                message="OK",
+            ),
+            searched_address=request.normalized_query or query,
+            objects=objects,
+            total_found=len(objects),
+            metadata=geocode_pb2.ResponseMetadata(
+                execution_time_ms=exec_ms,
+                timestamp=int(time.time()),
+                engine_version="bm25-osm-1.0",
+            ),
+        )
 
     def HealthCheck(self, request, context):
-        """
-        Health check для мониторинга
-        """
         uptime = int(time.time() - self.start_time)
-
         return geocode_pb2.HealthCheckResponse(
             status=geocode_pb2.HealthStatus.HEALTHY,
-            version="1.0.0",
-            uptime_seconds=uptime
+            version="bm25-osm-1.0",
+            uptime_seconds=uptime,
         )
 
 
+# -----------------------------------------------------------------------------
+# Server bootstrap
+# -----------------------------------------------------------------------------
+
 def serve():
-    """
-    Запуск gRPC сервера
-    """
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     geocode_pb2_grpc.add_GeocodeServiceServicer_to_server(
         GeocodeServicer(), server
     )
 
-    # Слушаем на порту 50051
-    server.add_insecure_port('[::]:50051')
+    port = os.environ.get("GRPC_PORT", "50051")
+    server.add_insecure_port(f"[::]:{port}")
     server.start()
 
-    logger.info("✅ Python gRPC сервер запущен на порту 50051")
-    logger.info("📡 Endpoints:")
-    logger.info("   - SearchAddress (поиск адресов)")
-    logger.info("   - HealthCheck (проверка здоровья)")
-    logger.info("Ожидание запросов...")
+    logger.info("gRPC geocoder server started on port %s", port)
 
     try:
         server.wait_for_termination()
     except KeyboardInterrupt:
-        logger.info("Остановка сервера...")
+        logger.info("Shutting down server...")
         server.stop(0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     serve()
