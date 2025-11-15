@@ -110,7 +110,11 @@ public class Program
             app.MapOpenApi();
         }
 
-        app.UseHttpsRedirection();
+        // HTTPS редирект только в production
+        if (!app.Environment.IsDevelopment())
+        {
+            app.UseHttpsRedirection();
+        }
 
         // Применяем CORS перед авторизацией
         app.UseCors("ReactApp");
