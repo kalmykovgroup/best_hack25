@@ -34,6 +34,7 @@ services:
 
   # API сервис (C# Web API)
   webapi:
+    container_name: webapi
     build:
       context: ./api
       dockerfile: Dockerfile
@@ -55,6 +56,7 @@ services:
 
   # Python Geocode сервис (поиск адресов)
   geocode-service:
+    container_name: geocode-service
     build:
       context: ./python-search
       dockerfile: Dockerfile
@@ -74,6 +76,7 @@ services:
 
   # Address Parser сервис (libpostal)
   address-parser:
+    container_name: address-parser
     build:
       context: ./address-parser
       dockerfile: Dockerfile
