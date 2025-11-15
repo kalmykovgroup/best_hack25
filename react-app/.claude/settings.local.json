@@ -10,7 +10,8 @@
       "Bash(dotnet add:*)",
       "Bash(git stash:*)",
       "mcp__ide__getDiagnostics",
-      "Bash(git restore:*)"
+      "Bash(git restore:*)",
+      "Bash(docker compose:*)"
     ],
     "deny": [],
     "ask": []

@@ -55,6 +55,7 @@ services:
       - PythonService__Url=${PYTHON_SERVICE_URL:-http://geocode-service:50051}
       - AddressParserService__Url=${ADDRESS_PARSER_URL:-http://address-parser:50052}
       - ASPNETCORE_FORWARDEDHEADERS_ENABLED=true
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5175}
     depends_on:
       geocode-service:
         condition: service_healthy
@@ -77,12 +78,8 @@ services:
     networks:
       - app-network
     # Первый запуск требует много времени (загрузка libpostal + индексация OSM)
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-        reservations:
-          memory: 2G
+    mem_limit: 6g
+    mem_reservation: 2g
     healthcheck:
       test: ["CMD", "python", "-c", "import grpc; channel = grpc.insecure_channel('localhost:50051'); channel.close()"]
       interval: 30s
@@ -104,18 +101,14 @@ services:
     networks:
       - app-network
     # libpostal требует много памяти при загрузке данных
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-        reservations:
-          memory: 2G
+    mem_limit: 6g
+    mem_reservation: 2g
     healthcheck:
       test: ["CMD", "python", "-c", "import grpc; channel = grpc.insecure_channel('localhost:50052'); channel.close()"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 30s
+      retries: 5
+      start_period: 600s  # 10 минут на первый запуск
     volumes:
       # Кэшируем данные libpostal для быстрого перезапуска
       - libpostal-data:/usr/local/share/libpostal

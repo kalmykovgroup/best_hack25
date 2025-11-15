@@ -77,6 +77,9 @@ jobs:
           # ASP.NET Core
           ASPNETCORE_ENVIRONMENT=Production
 
+          # CORS
+          ALLOWED_ORIGINS=https://${{ secrets.DOMAIN }},http://${{ secrets.DOMAIN }}
+
           # Python Geocode Service
           GEOCODE_SERVICE_PORT=50051
           GEOCODE_SERVICE_GRPC_PORT=50051
@@ -103,7 +106,7 @@ jobs:
 
           # Собираем и запускаем новые контейнеры
           echo "Building and starting containers..."
-          docker compose up -d --build
+          docker compose up -d --build --wait --wait-timeout 900
 
           # Проверяем статус
           echo "Checking container status..."

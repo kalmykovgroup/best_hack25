@@ -59,13 +59,16 @@
 
 .search-header {
   margin-bottom: 0;
-  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1rem;
 }
 
 .search-input-wrapper {
   position: relative;
   margin-bottom: 0;
-    width: 350px;
+  width: 700px;
 }
 
 .search-input {
