@@ -15,7 +15,16 @@ class BasicSearchEngine:
         self.db_path = db_path
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
-        logger.info("BasicSearchEngine initialized")
+
+        # Оптимизации SQLite для производительности
+        cursor = self.conn.cursor()
+        cursor.execute("PRAGMA journal_mode = WAL")  # Параллельное чтение
+        cursor.execute("PRAGMA cache_size = -64000")  # 64MB cache
+        cursor.execute("PRAGMA mmap_size = 268435456")  # 256MB memory-mapped I/O
+        cursor.execute("PRAGMA temp_store = MEMORY")  # Временные таблицы в памяти
+        cursor.execute("PRAGMA synchronous = NORMAL")  # Баланс скорости и надежности
+
+        logger.info("BasicSearchEngine initialized with performance optimizations")
 
     def search(self, components, limit=10):
         """

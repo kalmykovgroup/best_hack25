@@ -33,6 +33,7 @@ export const AddressSearchRedux = ({ onSelectResult }: AddressSearchReduxProps) 
     error,
     cacheEnabled,
     showCacheHit,
+    lastExecutionTimeMs,
   } = useAppSelector((state) => state.search);
 
   // Локальное состояние для задержки показа загрузчика
@@ -192,6 +193,11 @@ export const AddressSearchRedux = ({ onSelectResult }: AddressSearchReduxProps) 
               disabled={!isConnected}
             />
             {isSearching && <div className="search-spinner" />}
+            {lastExecutionTimeMs !== null && !isSearching && (
+              <div className="execution-time">
+                {lastExecutionTimeMs}ms
+              </div>
+            )}
           </div>
 
           <label className="cache-checkbox">

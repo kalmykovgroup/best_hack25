@@ -41,6 +41,9 @@ interface SearchState {
   // Прогресс
   progress: SearchProgress | null;
 
+  // Метрики
+  lastExecutionTimeMs: number | null;
+
   // Кэш
   cacheEnabled: boolean;
   cacheStats: {
@@ -66,6 +69,8 @@ const initialState: SearchState = {
 
   error: null,
   progress: null,
+
+  lastExecutionTimeMs: null,
 
   cacheEnabled: false,
   cacheStats: {
@@ -264,6 +269,7 @@ const searchSlice = createSlice({
         state.isSearching = false;
         state.error = null;
         state.isPythonServiceAvailable = true;
+        state.lastExecutionTimeMs = response.metadata?.executionTimeMs || null;
 
         // Сохраняем в кэш
         if (state.cacheEnabled && state.searchQuery) {

@@ -127,10 +127,15 @@ def create_database(db_path):
     """)
 
     # Индексы для базового алгоритма
+    logger.info("Creating indexes...")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_city ON buildings(city)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_street ON buildings(street)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_housenumber ON buildings(housenumber)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_coordinates ON buildings(lat, lon)")
+
+    # Составные индексы для ускорения сложных запросов
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_city_street ON buildings(city, street)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_city_street_house ON buildings(city, street, housenumber)")
 
     # FTS5 для улучшенного алгоритма
     cursor.execute("""
@@ -193,6 +198,27 @@ def import_osm(pbf_path, db_path):
     # Оптимизация FTS
     logger.info("Optimizing FTS index...")
     cursor.execute("INSERT INTO buildings_fts(buildings_fts) VALUES('optimize')")
+
+    conn.commit()
+
+    # Оптимизации SQLite для производительности
+    logger.info("Applying SQLite optimizations...")
+
+    # Обновление статистики для оптимизатора запросов
+    logger.info("  Running ANALYZE...")
+    cursor.execute("ANALYZE")
+
+    # WAL режим (Write-Ahead Logging) для параллельного доступа
+    logger.info("  Enabling WAL mode...")
+    cursor.execute("PRAGMA journal_mode = WAL")
+
+    # Увеличение cache для ускорения запросов
+    logger.info("  Increasing cache size...")
+    cursor.execute("PRAGMA cache_size = -64000")  # 64MB
+
+    # Memory-mapped I/O для быстрого доступа
+    logger.info("  Enabling memory-mapped I/O...")
+    cursor.execute("PRAGMA mmap_size = 268435456")  # 256MB
 
     conn.commit()
 
