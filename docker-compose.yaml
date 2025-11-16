@@ -105,15 +105,15 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 2G  # Увеличено для libpostal
         reservations:
-          memory: 256M
+          memory: 512M
     healthcheck:
-      test: ["CMD", "python", "-c", "import grpc; channel = grpc.insecure_channel('localhost:50052'); channel.close()"]
+      test: ["CMD-SHELL", "python -c 'import socket; s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(5); result = s.connect_ex((\"localhost\", 50052)); s.close(); exit(0 if result == 0 else 1)'"]
       interval: 30s
-      timeout: 10s
+      timeout: 15s
       retries: 5
-      start_period: 60s
+      start_period: 180s  # 3 минуты для скачивания libpostal данных
 
   # Address Corrector (исправление опечаток с libpostal)
   address-corrector:
@@ -140,15 +140,15 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 2G  # Увеличено для libpostal + создания словарей
         reservations:
-          memory: 256M
+          memory: 512M
     healthcheck:
-      test: ["CMD", "python", "-c", "import grpc; channel = grpc.insecure_channel('localhost:50053'); channel.close()"]
+      test: ["CMD-SHELL", "python -c 'import socket; s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(5); result = s.connect_ex((\"localhost\", 50053)); s.close(); exit(0 if result == 0 else 1)'"]
       interval: 30s
-      timeout: 10s
+      timeout: 15s
       retries: 5
-      start_period: 60s
+      start_period: 180s  # 3 минуты для скачивания libpostal данных + создания FTS5 словарей
 
   # Geocode сервис (хакатон - FTS5 + Levenshtein)
   geocode-service:
@@ -183,11 +183,11 @@ services:
         reservations:
           memory: 512M
     healthcheck:
-      test: ["CMD", "python", "-c", "import grpc; channel = grpc.insecure_channel('localhost:50054'); channel.close()"]
+      test: ["CMD-SHELL", "python -c 'import socket; s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(5); result = s.connect_ex((\"localhost\", 50054)); s.close(); exit(0 if result == 0 else 1)'"]
       interval: 30s
-      timeout: 10s
+      timeout: 15s
       retries: 5
-      start_period: 30s
+      start_period: 60s  # Время для инициализации БД и подключения к сервисам
 
 networks:
   app-network:
