@@ -68,12 +68,15 @@ services:
   osm-db:
     container_name: osm-db
     build:
-      context: ./sqlLiteBuilder
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./sqlLiteBuilder/Dockerfile
+      args:
+        - OSM_FILE_NAME=${OSM_FILE_NAME:-10-moscow.osm.pbf}
     ports:
       - "${OSM_DB_PORT:-8091}:8091"
     environment:
       - PYTHONUNBUFFERED=1
+      - OSM_FILE_NAME=${OSM_FILE_NAME:-10-moscow.osm.pbf}
     networks:
       - app-network
     volumes:

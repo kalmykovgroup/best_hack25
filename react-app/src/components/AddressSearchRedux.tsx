@@ -11,6 +11,7 @@ import {
 } from '../store/slices/searchSlice';
 import { logger } from '../utils/logger';
 import { AddressObject } from '../types/api.types';
+import { formatAddress } from '../utils/formatAddress';
 import './MapSearch.css';
 
 interface AddressSearchReduxProps {
@@ -231,7 +232,7 @@ export const AddressSearchRedux = ({ onSelectResult }: AddressSearchReduxProps) 
                 onClick={() => handleResultClick(result)}
               >
                 <div className="result-name">
-                  Адрес: {result.locality}, {result.street} {result.number}
+                  Нормализованный адрес: {formatAddress(result.locality, result.street, result.number)}
                 </div>
                 <div className="result-coordinates">
                   Координаты: {result.lat.toFixed(6)}, {result.lon.toFixed(6)}

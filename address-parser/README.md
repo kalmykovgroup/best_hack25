@@ -76,9 +76,9 @@ docker logs -f address-parser-standalone
   "components": {
     "country": "россия",
     "city": "москва",
-    "road": "тверская",        // ✅ без "ул."
-    "house_number": "10",       // ✅ без "д."
-    "unit": "5"                 // ✅ без "кв."
+    "road": "тверская",        // без "ул."
+    "house_number": "10",       // без "д."
+    "unit": "5"                 // без "кв."
   },
   "metadata": {
     "execution_time_ms": 15,

@@ -149,7 +149,7 @@ class AdvancedSearchEngine:
             words = escaped_address.split()
             # Добавляем слова, которые не являются номером дома
             for word in words:
-                if len(word) > 2 and word != house_number.lower():
+                if len(word) > 0 and word != house_number.lower():
                     fts_query_parts.append(f"{word}*")
                     logger.info(f"  Added word to FTS query: {word}*")
 
@@ -157,7 +157,7 @@ class AdvancedSearchEngine:
             # Если компонентов нет, пробуем по полному адресу
             escaped_address = escape_fts5_query(original_address.lower())
             words = escaped_address.split()
-            fts_query_parts = [f"{w}*" for w in words if len(w) > 2]
+            fts_query_parts = [f"{w}*" for w in words if len(w) > 0]
 
         if not fts_query_parts:
             logger.warning("No query parts for FTS search")

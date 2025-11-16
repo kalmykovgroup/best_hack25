@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { AddressSearchRedux } from './components/AddressSearchRedux'
 import { logger } from './utils/logger'
 import { AddressObject } from './types/api.types'
+import { formatAddress } from './utils/formatAddress'
 import './App.css'
 
 function App() {
@@ -38,7 +39,7 @@ function App() {
               <>
                 <h2>Выбранный адрес:</h2>
                 <div className="result-details">
-                  <p><strong>Адрес:</strong> {selectedResult.locality}, {selectedResult.street} {selectedResult.number}</p>
+                  <p><strong>Нормализованный адрес:</strong> {formatAddress(selectedResult.locality, selectedResult.street, selectedResult.number)}</p>
                   {selectedResult.additionalInfo?.fullAddress && (
                     <p><strong>Полный адрес:</strong> {selectedResult.additionalInfo.fullAddress}</p>
                   )}

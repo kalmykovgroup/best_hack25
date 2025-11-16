@@ -105,28 +105,12 @@ public class GeocodeHub : Hub
                 ProgressPercent = 90
             }, cts.Token);
 
-            // Проверяем, есть ли результаты (нет Status в новом контракте)
-            if (grpcResponse.Objects == null || grpcResponse.Objects.Count == 0)
-            {
-                var notFoundResponse = ApiResponse<SearchResultData>.Error(
-                    "Адрес не найден",
-                    "NOT_FOUND",
-                    new ResponseMetadata
-                    {
-                        RequestId = requestId,
-                        ExecutionTimeMs = stopwatch.ElapsedMilliseconds
-                    });
-
-                await Clients.Caller.SendAsync("SearchCompleted", notFoundResponse, cts.Token);
-                return;
-            }
-
-            // Преобразуем результаты gRPC в DTO для клиента
+            // Преобразуем результаты gRPC в DTO для клиента (даже если результатов нет)
             var searchResultData = new SearchResultData
             {
-                SearchedAddress = grpcResponse.SearchedAddress,
-                TotalFound = grpcResponse.Metadata?.TotalFound ?? grpcResponse.Objects.Count,
-                Objects = grpcResponse.Objects.Select(obj => new AddressObjectDto
+                SearchedAddress = grpcResponse.SearchedAddress ?? request.Query,
+                TotalFound = grpcResponse.Objects?.Count ?? 0,
+                Objects = grpcResponse.Objects?.Select(obj => new AddressObjectDto
                 {
                     Locality = obj.Locality,
                     Street = obj.Street,
@@ -138,7 +122,7 @@ public class GeocodeHub : Hub
                     {
                         Tags = obj.Tags.ToDictionary(kvp => kvp.Key, kvp => kvp.Value)
                     } : null
-                }).ToList()
+                }).ToList() ?? new List<AddressObjectDto>()
             };
 
             // Оборачиваем в ApiResponse

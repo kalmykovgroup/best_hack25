@@ -38,7 +38,13 @@
       "Bash(timeout 5 sleep:*)",
       "Bash($null)",
       "Bash(python test_suite.py:*)",
-      "Bash(timeout 30 docker compose exec:*)"
+      "Bash(timeout 30 docker compose exec:*)",
+      "Bash(timeout 10 sleep:*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(timeout 30 sleep:*)",
+      "Bash(timeout 10 curl:*)",
+      "Bash(move \"C:\\Users\\Apolon 1\\RiderProjects\\best_hack25\\sqlLiteBuilder\\10-moscow.osm.pbf\" \"C:\\Users\\Apolon 1\\RiderProjects\\best_hack25\\source\\10-moscow.osm.pbf\")",
+      "Bash(test:*)"
     ],
     "deny": [],
     "ask": []

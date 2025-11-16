@@ -72,20 +72,23 @@ class GeocodeServicer(geocode_pb2_grpc.GeocodeServiceServicer):
         logger.info("SearchAddress: address='%s' algorithm='%s' limit=%d",
                     address, algorithm, limit)
 
-        # Парсинг адреса (без коррекции опечаток)
+        # Инициализация переменных
         components = {}
+        used_corrector = False
+        corrected_address = address
+        use_parser = False
 
         # ВАЖНО: address-corrector ОТКЛЮЧЕН для геокодирования (слишком медленный: 700-1000ms)
         # Причина: LIKE "%query%" без индекса сканирует миллионы записей nodes/ways
         # Используем ТОЛЬКО address-parser (libpostal) для парсинга - быстро (18ms)
         # FTS5+BM25 в geocode-service уже находит похожие адреса с нечетким поиском
 
-        # Для очень коротких запросов (1 символ) возвращаем пустой результат (FTS5 требует минимум 2 символа)
-        if len(address) < 2:
-            logger.info("Query too short (len=%d), returning empty results", len(address))
+        # Пустые запросы возвращают пустой результат
+        if len(address) == 0:
+            logger.info("Empty query, returning empty results")
             results = []
         else:
-            # Для коротких запросов (2 символа) используем простой парсинг
+            # Для коротких запросов (1-2 символа) используем простой парсинг
             # Для длинных (3+ символа) используем libpostal если доступен
             use_parser = self.use_external_services and self.parser_stub and len(address) >= 3
 
@@ -142,8 +145,6 @@ class GeocodeServicer(geocode_pb2_grpc.GeocodeServiceServicer):
 
             # Шаг 3: УМНАЯ КОРРЕКЦИЯ - если лучший score < 28%, пробуем исправить опечатки
             best_score = results[0]['score'] if results else 0.0
-            corrected_address = address
-            used_corrector = False
 
             if best_score < 0.28 and self.corrector_stub and len(address) >= 3:
                 logger.info("Low score detected (%.2f < 0.28), trying address correction...", best_score)

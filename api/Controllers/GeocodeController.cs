@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Api.Models.Common;
+using Api.Models.Geocode;
 using Api.Models.WebSocket;
 using Api.Services.RequestManagement;
 using Api.Services.Search;
@@ -28,6 +29,71 @@ public class GeocodeController : ControllerBase
         _pythonSearchClient = pythonSearchClient;
         _requestsManager = requestsManager;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// REST endpoint для геокодирования
+    /// Возвращает результаты в формате JSON
+    /// </summary>
+    /// <param name="query">Поисковая строка (адрес)</param>
+    /// <param name="limit">Максимальное количество результатов (по умолчанию 10)</param>
+    [HttpGet]
+    [Produces("application/json")]
+    [ProducesResponseType(typeof(GeocodeResponse), 200)]
+    public async Task<IActionResult> Search(
+        [FromQuery] string? query,
+        [FromQuery] int limit = 10)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return Ok(new GeocodeResponse
+            {
+                SearchedAddress = query ?? "",
+                Objects = new List<AddressObject>()
+            });
+        }
+
+        try
+        {
+            var requestId = Guid.NewGuid().ToString();
+
+            // Прямой вызов geocode-service
+            var grpcResponse = await _pythonSearchClient.SearchAddressAsync(
+                query,
+                limit,
+                requestId,
+                CancellationToken.None);
+
+            // Преобразуем в формат ответа
+            var response = new GeocodeResponse
+            {
+                SearchedAddress = query,
+                Objects = grpcResponse.Objects
+                    .Select(obj => new AddressObject
+                    {
+                        Locality = obj.Locality,
+                        Street = obj.Street,
+                        Number = obj.Number,
+                        Lon = obj.Lon,
+                        Lat = obj.Lat,
+                        Score = obj.Score
+                    })
+                    .ToList()
+            };
+
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error processing geocode request for query: {Query}", query);
+
+            // Даже при ошибке возвращаем код 200 с пустым массивом
+            return Ok(new GeocodeResponse
+            {
+                SearchedAddress = query,
+                Objects = new List<AddressObject>()
+            });
+        }
     }
 
     /// <summary>
@@ -117,28 +183,12 @@ public class GeocodeController : ControllerBase
                 ProgressPercent = 90
             });
 
-            // Проверяем, есть ли результаты (нет Status в новом контракте)
-            if (grpcResponse.Objects == null || grpcResponse.Objects.Count == 0)
-            {
-                var notFoundResponse = ApiResponse<SearchResultData>.Error(
-                    "Адрес не найден",
-                    "NOT_FOUND",
-                    new ResponseMetadata
-                    {
-                        RequestId = requestId,
-                        ExecutionTimeMs = stopwatch.ElapsedMilliseconds
-                    });
-
-                await SendSseEvent("completed", notFoundResponse);
-                return;
-            }
-
-            // Преобразуем в DTO
+            // Преобразуем в DTO (даже если результатов нет)
             var searchResultData = new SearchResultData
             {
-                SearchedAddress = grpcResponse.SearchedAddress,
-                TotalFound = grpcResponse.Metadata?.TotalFound ?? grpcResponse.Objects.Count,
-                Objects = grpcResponse.Objects.Select(obj => new AddressObjectDto
+                SearchedAddress = grpcResponse.SearchedAddress ?? query,
+                TotalFound = grpcResponse.Objects?.Count ?? 0,
+                Objects = grpcResponse.Objects?.Select(obj => new AddressObjectDto
                 {
                     Locality = obj.Locality,
                     Street = obj.Street,
@@ -150,7 +200,7 @@ public class GeocodeController : ControllerBase
                     {
                         Tags = obj.Tags.ToDictionary(kvp => kvp.Key, kvp => kvp.Value)
                     } : null
-                }).ToList()
+                }).ToList() ?? new List<AddressObjectDto>()
             };
 
             // Оборачиваем в ApiResponse
