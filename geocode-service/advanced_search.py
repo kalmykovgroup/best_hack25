@@ -131,6 +131,19 @@ class AdvancedSearchEngine:
         if house_number:
             fts_query_parts.append(f"{house_number}*")
 
+        # КРИТИЧЕСКАЯ ФИКС: Если есть только номер дома (без города и улицы),
+        # добавляем слова из оригинального адреса для поиска названия улицы
+        # Это помогает когда LibPostal не распознал название улицы (например, "Арбат 10")
+        if house_number and not city and not street:
+            logger.info("Only house number detected, adding original address words to FTS query")
+            escaped_address = escape_fts5_query(original_address.lower())
+            words = escaped_address.split()
+            # Добавляем слова, которые не являются номером дома
+            for word in words:
+                if len(word) > 2 and word != house_number.lower():
+                    fts_query_parts.append(f"{word}*")
+                    logger.info(f"  Added word to FTS query: {word}*")
+
         if not fts_query_parts:
             # Если компонентов нет, пробуем по полному адресу
             escaped_address = escape_fts5_query(original_address.lower())
@@ -188,6 +201,7 @@ class AdvancedSearchEngine:
                 remove_house_number=False
             )
 
+            # Левенштейн - стандартный подход с max_len для нормализации
             lev_distance = Levenshtein.distance(predicted_addr_normalized, original_addr_normalized)
             max_len = max(len(predicted_addr_normalized), len(original_addr_normalized), 1)
             lev_score = 1.0 - (lev_distance / max_len) if max_len > 0 else 0.0
@@ -216,20 +230,34 @@ class AdvancedSearchEngine:
             if house_number:
                 total_components += 1
                 if row['housenumber'] and house_number == row['housenumber']:
-                    component_matches += 1
+                    component_matches += 1  # Точное совпадение номера
                 elif row['housenumber'] and house_number in row['housenumber']:
-                    component_matches += 0.5
+                    component_matches += 0.5  # Частичное совпадение (например, "20" в "20а")
                 elif not row['housenumber']:
-                    component_matches -= 0.3  # Штраф за отсутствие номера
+                    # Штраф за отсутствие номера, когда он УКАЗАН в запросе
+                    component_matches -= 0.3
 
             component_score = component_matches / total_components if total_components > 0 else 0.0
 
-            # Комбинированный score (взвешенная сумма для максимальной продуктивности)
-            final_score = (
-                0.25 * lev_score +
-                0.60 * component_score +
-                0.15 * normalized_bm25
-            )
+            # Адаптивные веса в зависимости от наличия компонентов
+            # Если есть название улицы в запросе - Levenshtein важнее (текстовое сходство)
+            # Если только номер дома - component matching важнее
+            has_street_name = bool(street)
+
+            if has_street_name:
+                # Есть название улицы - приоритет текстовому сходству
+                final_score = (
+                    0.40 * lev_score +        # Увеличен для текстового сходства
+                    0.45 * component_score +
+                    0.15 * normalized_bm25
+                )
+            else:
+                # Нет названия улицы (только номер) - приоритет точным совпадениям
+                final_score = (
+                    0.20 * lev_score +
+                    0.65 * component_score +  # Высокий вес для точных совпадений
+                    0.15 * normalized_bm25
+                )
 
             # Детальное логирование для первого результата
             if len(results) == 0:
@@ -239,21 +267,23 @@ class AdvancedSearchEngine:
                     "  DB city='%s', street='%s', house='%s'\n"
                     "  Original address: '%s'\n"
                     "  DB full_address: '%s'\n"
-                    "  Normalized input: '%s'\n"
-                    "  Normalized DB: '%s'\n"
+                    "  Normalized input: '%s' (len=%d)\n"
+                    "  Normalized DB: '%s' (len=%d)\n"
                     "  Component score: %.3f (matches: %.1f / total: %d)\n"
                     "  Levenshtein score: %.3f (distance: %d / max_len: %d)\n"
                     "  BM25 score: %.3f\n"
+                    "  has_street_name: %s\n"
                     "  FINAL SCORE: %.3f",
                     city, street, house_number,
                     row['city'], row['street'], row['housenumber'],
                     original_address,
                     row['full_address'],
-                    original_addr_normalized,
-                    predicted_addr_normalized,
+                    original_addr_normalized, len(original_addr_normalized),
+                    predicted_addr_normalized, len(predicted_addr_normalized),
                     component_score, component_matches, total_components,
                     lev_score, lev_distance, max_len,
                     normalized_bm25,
+                    has_street_name,
                     final_score
                 )
 

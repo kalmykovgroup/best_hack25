@@ -36,7 +36,9 @@
       "Bash(docker cp:*)",
       "Bash(python test_smart_correction.py:*)",
       "Bash(timeout 5 sleep:*)",
-      "Bash($null)"
+      "Bash($null)",
+      "Bash(python test_suite.py:*)",
+      "Bash(timeout 30 docker compose exec:*)"
     ],
     "deny": [],
     "ask": []

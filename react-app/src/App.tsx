@@ -15,7 +15,17 @@ function App() {
 
   return (
     <div className="app">
-      <h1>BEST HACK</h1>
+      <div className="header">
+        <h1>BEST HACK</h1>
+        <div className="links">
+          <a href="https://github.com/kalmykovgroup/best_hack25" target="_blank" rel="noopener noreferrer">
+            GitHub
+          </a>
+          <a href="https://hh.ru/resume/811aeab6ff0eca91650039ed1f636b52357439" target="_blank" rel="noopener noreferrer">
+            Резюме
+          </a>
+        </div>
+      </div>
 
       <div className={`layout ${selectedResult ? 'has-selection' : ''}`}>
         <div className="left-panel">
