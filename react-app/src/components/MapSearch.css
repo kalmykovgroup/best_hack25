@@ -146,6 +146,9 @@
 
 .search-results {
   max-height: 400px;
+  min-width: 350px;
+  max-width: 500px;
+  width: 500px;
   overflow-y: auto;
   border: 1px solid #e0e0e0;
   border-radius: 8px;
@@ -173,18 +176,27 @@
   font-size: 16px;
   margin-bottom: 4px;
   color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .result-description {
   font-size: 14px;
   color: #666;
   margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .result-coordinates {
   font-size: 12px;
   color: #999;
   font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .result-type {

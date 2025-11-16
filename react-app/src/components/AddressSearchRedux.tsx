@@ -8,6 +8,7 @@ import {
   setSearchQuery,
   toggleCache,
   clearCache,
+  clearResults,
 } from '../store/slices/searchSlice';
 import { logger } from '../utils/logger';
 import { AddressObject } from '../types/api.types';
@@ -131,6 +132,8 @@ export const AddressSearchRedux = ({ onSelectResult }: AddressSearchReduxProps) 
       }
 
       if (!query) {
+        // Очищаем результаты когда поле поиска пустое
+        dispatch(clearResults());
         return;
       }
 
