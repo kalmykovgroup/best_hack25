@@ -92,9 +92,6 @@ jobs:
           GRPC_TIMEOUT_SECONDS=30
           ENVEOF
 
-          # Создаем директории для certbot
-          mkdir -p certbot/www certbot/conf
-
           # Останавливаем старые контейнеры
           echo "Stopping old containers..."
           docker compose down || true

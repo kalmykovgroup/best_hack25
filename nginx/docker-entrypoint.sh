@@ -10,6 +10,7 @@ echo "🚀 Starting Nginx with smart SSL detection..."
 DOMAIN=${DOMAIN:-localhost}
 EMAIL=${EMAIL:-admin@example.com}
 AUTO_GENERATE_CONFIG=${AUTO_GENERATE_CONFIG:-true}
+CERTBOT_STAGING=${CERTBOT_STAGING:-0}
 
 # Путь к сертификату
 CERT_DIR="/etc/letsencrypt/live"
@@ -67,7 +68,13 @@ obtain_ssl_certificate() {
     fi
 
     # Пытаемся получить сертификат через certbot
-    echo "📝 Requesting certificate from Let's Encrypt..."
+    if [ "$CERTBOT_STAGING" = "1" ]; then
+        echo "📝 Requesting STAGING certificate from Let's Encrypt (for testing)..."
+        STAGING_FLAG="--staging"
+    else
+        echo "📝 Requesting PRODUCTION certificate from Let's Encrypt..."
+        STAGING_FLAG=""
+    fi
 
     if certbot certonly \
         --webroot \
@@ -76,6 +83,7 @@ obtain_ssl_certificate() {
         --agree-tos \
         --no-eff-email \
         --non-interactive \
+        $STAGING_FLAG \
         -d "$DOMAIN" \
         -d "www.$DOMAIN" 2>&1; then
 
