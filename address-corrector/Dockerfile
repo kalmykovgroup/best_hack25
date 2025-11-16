@@ -42,6 +42,8 @@ RUN python -m grpc_tools.protoc \
 
 # Копирование основного кода
 COPY grpc_server.py .
+COPY fast_corrector.py .
+COPY create_dictionaries.py .
 COPY entrypoint.sh .
 
 # Делаем entrypoint исполняемым

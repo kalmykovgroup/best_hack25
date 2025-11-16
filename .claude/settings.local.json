@@ -30,7 +30,13 @@
       "Bash(curl:*)",
       "Bash(timeout 5 docker compose:*)",
       "Bash(npm run build:*)",
-      "Bash(timeout 10 docker compose:*)"
+      "Bash(timeout 10 docker compose:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(copy sqlLiteBuildercreate_dictionaries.py address-correctorcreate_dictionaries.py)",
+      "Bash(docker cp:*)",
+      "Bash(python test_smart_correction.py:*)",
+      "Bash(timeout 5 sleep:*)",
+      "Bash($null)"
     ],
     "deny": [],
     "ask": []

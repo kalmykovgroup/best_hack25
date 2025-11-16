@@ -177,14 +177,11 @@ class AdvancedSearchEngine:
             max_bm25 = abs(rows[0]['bm25_score']) if rows else 1.0
             normalized_bm25 = min(bm25_score / max_bm25, 1.0) if max_bm25 > 0 else 0.0
 
-            # 2. Левенштейн для текстового сходства (с нормализацией)
+            # 2. Левенштейн для текстового сходства
             # Нормализуем адреса для корректного сравнения
-            # Если в запросе нет номера дома, убираем его и из БД для сравнения
-            has_house_number = bool(house_number)
-
             predicted_addr_normalized = normalize_address_for_comparison(
                 row['full_address'],
-                remove_house_number=not has_house_number
+                remove_house_number=False
             )
             original_addr_normalized = normalize_address_for_comparison(
                 original_address,
@@ -201,22 +198,20 @@ class AdvancedSearchEngine:
 
             if city:
                 total_components += 1
-                # Строгое совпадение для города
                 if row['city'] and city.lower() == row['city'].lower():
                     component_matches += 1
                 elif row['city'] and city.lower() in row['city'].lower():
-                    component_matches += 0.5  # Частичное совпадение
+                    component_matches += 0.5
 
             if street:
                 total_components += 1
-                # Нормализуем улицы для сравнения (убираем "улица", "ул." и т.д.)
                 street_normalized = normalize_address_for_comparison(street)
                 db_street_normalized = normalize_address_for_comparison(row['street'] or '')
 
                 if street_normalized == db_street_normalized:
-                    component_matches += 1  # Точное совпадение после нормализации
+                    component_matches += 1
                 elif street_normalized and db_street_normalized and street_normalized in db_street_normalized:
-                    component_matches += 0.7  # Частичное совпадение
+                    component_matches += 0.7
 
             if house_number:
                 total_components += 1
@@ -224,15 +219,16 @@ class AdvancedSearchEngine:
                     component_matches += 1
                 elif row['housenumber'] and house_number in row['housenumber']:
                     component_matches += 0.5
+                elif not row['housenumber']:
+                    component_matches -= 0.3  # Штраф за отсутствие номера
 
             component_score = component_matches / total_components if total_components > 0 else 0.0
 
-            # Комбинированный score (взвешенная сумма)
-            # Увеличен вес component_score для более точных результатов при совпадении компонентов
+            # Комбинированный score (взвешенная сумма для максимальной продуктивности)
             final_score = (
-                0.3 * lev_score +
-                0.5 * component_score +
-                0.2 * normalized_bm25
+                0.25 * lev_score +
+                0.60 * component_score +
+                0.15 * normalized_bm25
             )
 
             # Детальное логирование для первого результата

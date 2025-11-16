@@ -41,16 +41,22 @@ class GeocodeServicer(geocode_pb2_grpc.GeocodeServiceServicer):
         logger.info("Cached %d cities from database", len(self.db_cities))
 
         if self.use_external_services:
-            logger.info("Initializing with external services: parser=%s (corrector disabled)", parser_url)
+            logger.info("Initializing with external services: parser=%s, corrector=%s", parser_url, corrector_url)
 
-            # gRPC канал только для address-parser (corrector отключен из-за низкой производительности)
+            # gRPC канал для address-parser (быстрый парсинг, всегда используется)
             self.parser_channel = grpc.insecure_channel(parser_url)
             self.parser_stub = address_parser_pb2_grpc.AddressParserServiceStub(self.parser_channel)
 
-            # address-corrector отключен (слишком медленный для real-time геокодирования)
-            self.corrector_stub = None
+            # gRPC канал для address-corrector (медленный ~117ms, используется только если score < 28%)
+            if corrector_url:
+                self.corrector_channel = grpc.insecure_channel(corrector_url)
+                self.corrector_stub = address_corrector_pb2_grpc.AddressCorrectorServiceStub(self.corrector_channel)
+                logger.info("Address-corrector enabled (smart fallback for low scores)")
+            else:
+                self.corrector_stub = None
+                logger.warning("Address-corrector URL not provided, correction disabled")
 
-            logger.info("Geocode service initialized with address-parser (corrector disabled for performance)")
+            logger.info("Geocode service initialized with parser and smart corrector fallback")
         else:
             logger.warning("External services not configured, using fallback simple parsing")
             logger.info("Geocode service initialized in fallback mode")
@@ -74,59 +80,145 @@ class GeocodeServicer(geocode_pb2_grpc.GeocodeServiceServicer):
         # Используем ТОЛЬКО address-parser (libpostal) для парсинга - быстро (18ms)
         # FTS5+BM25 в geocode-service уже находит похожие адреса с нечетким поиском
 
-        # Для коротких запросов (автодополнение) используем простой парсинг
-        use_parser = self.use_external_services and self.parser_stub and len(address) >= 3
+        # Для очень коротких запросов (1 символ) возвращаем пустой результат (FTS5 требует минимум 2 символа)
+        if len(address) < 2:
+            logger.info("Query too short (len=%d), returning empty results", len(address))
+            results = []
+        else:
+            # Для коротких запросов (2 символа) используем простой парсинг
+            # Для длинных (3+ символа) используем libpostal если доступен
+            use_parser = self.use_external_services and self.parser_stub and len(address) >= 3
 
-        if use_parser:
-            try:
-                # Парсинг адреса через libpostal (БЕЗ коррекции опечаток)
-                parser_start = time.time()
-                logger.info("Step 1: Calling address-parser for address parsing (corrector disabled)")
-                parse_request = address_parser_pb2.ParseAddressRequest(
-                    address=address,
-                    country="RU",
-                    language="ru"
-                )
-                parse_response = self.parser_stub.ParseAddress(parse_request)
-                parser_time_ms = int((time.time() - parser_start) * 1000)
+            if use_parser:
+                try:
+                    # Парсинг адреса через libpostal (БЕЗ коррекции опечаток)
+                    parser_start = time.time()
+                    logger.info("Step 1: Calling address-parser for address parsing (corrector disabled)")
+                    parse_request = address_parser_pb2.ParseAddressRequest(
+                        address=address,
+                        country="RU",
+                        language="ru"
+                    )
+                    parse_response = self.parser_stub.ParseAddress(parse_request)
+                    parser_time_ms = int((time.time() - parser_start) * 1000)
 
-                if parse_response.status.code == address_parser_pb2.OK:
-                    parsed_components = parse_response.components
-                    components = {
-                        'city': parsed_components.city or '',
-                        'road': parsed_components.road or '',
-                        'house_number': parsed_components.house_number or '',
-                        'postcode': parsed_components.postcode or '',
-                        'suburb': parsed_components.suburb or ''
-                    }
-                    logger.info("Address parsed in %d ms: %s", parser_time_ms, components)
-                else:
-                    logger.warning("Address parsing failed in %d ms: %s", parser_time_ms, parse_response.status.message)
+                    if parse_response.status.code == address_parser_pb2.OK:
+                        parsed_components = parse_response.components
+                        components = {
+                            'city': parsed_components.city or '',
+                            'road': parsed_components.road or '',
+                            'house_number': parsed_components.house_number or '',
+                            'postcode': parsed_components.postcode or '',
+                            'suburb': parsed_components.suburb or ''
+                        }
+                        logger.info("Address parsed in %d ms: %s", parser_time_ms, components)
+                    else:
+                        logger.warning("Address parsing failed in %d ms: %s", parser_time_ms, parse_response.status.message)
+                        # Fallback to simple parsing
+                        components = self._simple_parse(address)
+
+                except grpc.RpcError as e:
+                    logger.error("gRPC error during address parsing: %s", e)
                     # Fallback to simple parsing
                     components = self._simple_parse(address)
-
-            except grpc.RpcError as e:
-                logger.error("gRPC error during address parsing: %s", e)
-                # Fallback to simple parsing
-                components = self._simple_parse(address)
-        else:
-            # Fallback режим: используем простой парсинг для коротких запросов или если сервисы недоступны
-            if len(address) < 3:
-                logger.info("Using simple parsing for short query (len=%d): fast autocomplete mode", len(address))
             else:
-                logger.info("Using fallback simple parsing (external services not available)")
-            components = self._simple_parse(address)
+                # Fallback режим: используем простой парсинг для коротких запросов или если сервисы недоступны
+                if len(address) < 3:
+                    logger.info("Using simple parsing for short query (len=%d): fast autocomplete mode", len(address))
+                else:
+                    logger.info("Using fallback simple parsing (external services not available)")
+                components = self._simple_parse(address)
 
-        logger.info("Final components for search: %s", components)
+            logger.info("Final components for search: %s", components)
 
-        # Шаг 2: Поиск в БД по выбранному алгоритму
-        search_start = time.time()
-        if algorithm == "basic":
-            results = self.basic_engine.search(components, limit)
-        else:
-            results = self.advanced_engine.search(components, address, limit)
-        search_time_ms = int((time.time() - search_start) * 1000)
-        logger.info("Database search completed in %d ms", search_time_ms)
+            # Шаг 2: Поиск в БД по выбранному алгоритму
+            search_start = time.time()
+            if algorithm == "basic":
+                results = self.basic_engine.search(components, limit)
+            else:
+                results = self.advanced_engine.search(components, address, limit)
+            search_time_ms = int((time.time() - search_start) * 1000)
+            logger.info("Database search completed in %d ms", search_time_ms)
+
+            # Шаг 3: УМНАЯ КОРРЕКЦИЯ - если лучший score < 28%, пробуем исправить опечатки
+            best_score = results[0]['score'] if results else 0.0
+            corrected_address = address
+            used_corrector = False
+
+            if best_score < 0.28 and self.corrector_stub and len(address) >= 3:
+                logger.info("Low score detected (%.2f < 0.28), trying address correction...", best_score)
+
+                try:
+                    corrector_start = time.time()
+
+                    # Вызов address-corrector для исправления опечаток
+                    correct_request = address_corrector_pb2.CorrectAddressRequest(
+                        original_address=address,
+                        max_suggestions=1,
+                        min_similarity=0.6
+                    )
+                    correct_response = self.corrector_stub.CorrectAddress(correct_request)
+
+                    corrector_time_ms = int((time.time() - corrector_start) * 1000)
+
+                    if correct_response.was_corrected:
+                        corrected_address = correct_response.corrected_address
+                        logger.info("Address corrected in %d ms: '%s' -> '%s'",
+                                   corrector_time_ms, address, corrected_address)
+
+                        # ВАЖНО: Сохраняем номер дома из исходного запроса!
+                        # Corrector может исправлять только улицу и терять номер дома
+                        original_house = components.get('house_number', '').strip()
+
+                        # Повторяем парсинг и поиск с откорректированным адресом
+                        if use_parser:
+                            parse_request = address_parser_pb2.ParseAddressRequest(
+                                address=corrected_address,
+                                country="RU",
+                                language="ru"
+                            )
+                            parse_response = self.parser_stub.ParseAddress(parse_request)
+                            if parse_response.status.code == address_parser_pb2.OK:
+                                parsed_components = parse_response.components
+                                components = {
+                                    'city': parsed_components.city or '',
+                                    'road': parsed_components.road or '',
+                                    'house_number': parsed_components.house_number or original_house,  # Используем исходный номер!
+                                    'postcode': parsed_components.postcode or '',
+                                    'suburb': parsed_components.suburb or ''
+                                }
+                        else:
+                            components = self._simple_parse(corrected_address)
+                            # Если простой парсинг не нашел номер, используем исходный
+                            if not components.get('house_number') and original_house:
+                                components['house_number'] = original_house
+
+                        # Повторный поиск с откорректированным адресом
+                        if algorithm == "basic":
+                            corrected_results = self.basic_engine.search(components, limit)
+                        else:
+                            corrected_results = self.advanced_engine.search(components, corrected_address, limit)
+
+                        corrected_best_score = corrected_results[0]['score'] if corrected_results else 0.0
+
+                        logger.info("Corrected search score: %.2f (original: %.2f)",
+                                   corrected_best_score, best_score)
+
+                        # Используем результаты коррекции, если они лучше
+                        if corrected_best_score > best_score:
+                            results = corrected_results
+                            used_corrector = True
+                            logger.info("Using corrected results (score improved: %.2f -> %.2f)",
+                                       best_score, corrected_best_score)
+                        else:
+                            logger.info("Keeping original results (correction didn't improve score)")
+                    else:
+                        logger.info("Corrector returned no corrections in %d ms", corrector_time_ms)
+
+                except grpc.RpcError as e:
+                    logger.error("gRPC error during address correction: %s", e)
+                except Exception as e:
+                    logger.error("Error during address correction: %s", e, exc_info=True)
 
         # Формирование ответа в формате хакатона
         objects = []
@@ -151,9 +243,13 @@ class GeocodeServicer(geocode_pb2_grpc.GeocodeServiceServicer):
         exec_ms = int((time.time() - start_time) * 1000)
 
         # Debug info
-        normalization_method = "libpostal+fts5" if use_parser else "simple_parse+fts5"
+        if used_corrector:
+            normalization_method = f"corrector+{'libpostal' if use_parser else 'simple_parse'}+fts5"
+        else:
+            normalization_method = f"{'libpostal' if use_parser else 'simple_parse'}+fts5"
+
         debug_info = geocode_pb2.DebugInfo(
-            corrected_address=address,  # corrector disabled, using original address
+            corrected_address=corrected_address,  # Показываем откорректированный адрес (если была коррекция)
             parsed=geocode_pb2.AddressComponents(
                 city=components.get('city', ''),
                 road=components.get('road', ''),
@@ -199,8 +295,8 @@ class GeocodeServicer(geocode_pb2_grpc.GeocodeServiceServicer):
         response = geocode_pb2.HealthCheckResponse(
             status=status,
             database_size=db_size,
-            corrector_available=False,
-            parser_available=False
+            corrector_available=bool(self.corrector_stub),
+            parser_available=bool(self.parser_stub)
         )
 
         logger.info("HealthCheck: status=%s db_size=%d", status, db_size)
