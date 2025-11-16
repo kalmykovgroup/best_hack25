@@ -2,9 +2,9 @@ using System.Diagnostics;
 using System.Text.Json;
 using Api.Models.Common;
 using Api.Models.WebSocket;
-using Api.Services.Normalization;
 using Api.Services.RequestManagement;
 using Api.Services.Search;
+using Grpc.Core;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Api.Controllers;
@@ -18,18 +18,15 @@ public class GeocodeController : ControllerBase
 {
     private readonly IPythonSearchClient _pythonSearchClient;
     private readonly IActiveRequestsManager _requestsManager;
-    private readonly IAddressNormalizer _addressNormalizer;
     private readonly ILogger<GeocodeController> _logger;
 
     public GeocodeController(
         IPythonSearchClient pythonSearchClient,
         IActiveRequestsManager requestsManager,
-        IAddressNormalizer addressNormalizer,
         ILogger<GeocodeController> logger)
     {
         _pythonSearchClient = pythonSearchClient;
         _requestsManager = requestsManager;
-        _addressNormalizer = addressNormalizer;
         _logger = logger;
     }
 
@@ -73,10 +70,11 @@ public class GeocodeController : ControllerBase
                 ProgressPercent = 10
             });
 
-            if (!_addressNormalizer.IsValid(query))
+            // Простая валидация запроса
+            if (string.IsNullOrWhiteSpace(query))
             {
                 var errorResponse = ApiResponse<SearchResultData>.Error(
-                    "Поисковая строка некорректна",
+                    "Поисковая строка пустая",
                     "INVALID_QUERY",
                     new ResponseMetadata
                     {
@@ -88,31 +86,18 @@ public class GeocodeController : ControllerBase
                 return;
             }
 
-            // Парсинг и нормализация через Address Parser
-            await SendSseEvent("progress", new SearchProgress
-            {
-                RequestId = requestId,
-                Status = "normalizing",
-                Message = "Парсинг и нормализация адреса...",
-                ProgressPercent = 25
-            });
-
-            var normalizeResult = await _addressNormalizer.NormalizeAndParseAsync(query);
-
-            // Прогресс: поиск
+            // Прогресс: поиск (geocode-service сам выполняет нормализацию + поиск)
             await SendSseEvent("progress", new SearchProgress
             {
                 RequestId = requestId,
                 Status = "searching",
-                Message = "Поиск в базе данных...",
-                ProgressPercent = 50
+                Message = "Поиск адреса...",
+                ProgressPercent = 30
             });
 
-            // Вызов Python gRPC сервиса с компонентами
+            // Прямой вызов geocode-service (встроенная нормализация + BM25 поиск)
             var grpcResponse = await _pythonSearchClient.SearchAddressAsync(
-                normalizeResult.NormalizedAddress,
-                query, // Оригинальный запрос пользователя
-                normalizeResult.Components, // Структурированные компоненты
+                query,
                 limit,
                 requestId,
                 cts.Token);
@@ -132,19 +117,19 @@ public class GeocodeController : ControllerBase
                 ProgressPercent = 90
             });
 
-            // Проверяем статус ответа
-            if (grpcResponse.Status.Code != Grpc.StatusCode.Ok)
+            // Проверяем, есть ли результаты (нет Status в новом контракте)
+            if (grpcResponse.Objects == null || grpcResponse.Objects.Count == 0)
             {
-                var errorResponse = ApiResponse<SearchResultData>.Error(
-                    grpcResponse.Status.Message,
-                    grpcResponse.Status.Code.ToString(),
+                var notFoundResponse = ApiResponse<SearchResultData>.Error(
+                    "Адрес не найден",
+                    "NOT_FOUND",
                     new ResponseMetadata
                     {
                         RequestId = requestId,
                         ExecutionTimeMs = stopwatch.ElapsedMilliseconds
                     });
 
-                await SendSseEvent("completed", errorResponse);
+                await SendSseEvent("completed", notFoundResponse);
                 return;
             }
 
@@ -152,7 +137,7 @@ public class GeocodeController : ControllerBase
             var searchResultData = new SearchResultData
             {
                 SearchedAddress = grpcResponse.SearchedAddress,
-                TotalFound = grpcResponse.TotalFound,
+                TotalFound = grpcResponse.Metadata?.TotalFound ?? grpcResponse.Objects.Count,
                 Objects = grpcResponse.Objects.Select(obj => new AddressObjectDto
                 {
                     Locality = obj.Locality,
@@ -161,15 +146,10 @@ public class GeocodeController : ControllerBase
                     Lon = obj.Lon,
                     Lat = obj.Lat,
                     Score = obj.Score,
-                    AdditionalInfo = obj.AdditionalInfo != null
-                        ? new AddressAdditionalInfo
-                        {
-                            PostalCode = obj.AdditionalInfo.PostalCode,
-                            District = obj.AdditionalInfo.District,
-                            FullAddress = obj.AdditionalInfo.FullAddress,
-                            ObjectId = obj.AdditionalInfo.ObjectId
-                        }
-                        : null
+                    AdditionalInfo = obj.Tags?.Count > 0 ? new AddressAdditionalInfo
+                    {
+                        Tags = obj.Tags.ToDictionary(kvp => kvp.Key, kvp => kvp.Value)
+                    } : null
                 }).ToList()
             };
 
@@ -204,9 +184,54 @@ public class GeocodeController : ControllerBase
 
             await SendSseEvent("completed", cancelledResponse);
         }
+        catch (RpcException ex) when (ex.StatusCode == global::Grpc.Core.StatusCode.Unavailable)
+        {
+            _logger.LogWarning("geocode-service недоступен для запроса {RequestId}", requestId);
+
+            var serviceUnavailableResponse = ApiResponse<SearchResultData>.Error(
+                "Сервис геокодирования временно недоступен. Пожалуйста, подождите...",
+                "SERVICE_UNAVAILABLE",
+                new ResponseMetadata
+                {
+                    RequestId = requestId,
+                    ExecutionTimeMs = stopwatch.ElapsedMilliseconds
+                });
+
+            await SendSseEvent("completed", serviceUnavailableResponse);
+        }
+        catch (RpcException ex) when (ex.StatusCode == global::Grpc.Core.StatusCode.DeadlineExceeded)
+        {
+            _logger.LogWarning("Таймаут при вызове geocode-service для запроса {RequestId}", requestId);
+
+            var timeoutResponse = ApiResponse<SearchResultData>.Error(
+                "Превышено время ожидания ответа от сервиса геокодирования",
+                "TIMEOUT",
+                new ResponseMetadata
+                {
+                    RequestId = requestId,
+                    ExecutionTimeMs = stopwatch.ElapsedMilliseconds
+                });
+
+            await SendSseEvent("completed", timeoutResponse);
+        }
+        catch (RpcException ex)
+        {
+            _logger.LogError(ex, "Ошибка gRPC при обработке запроса {RequestId}: {StatusCode}", requestId, ex.StatusCode);
+
+            var grpcErrorResponse = ApiResponse<SearchResultData>.Error(
+                $"Ошибка при обращении к сервису геокодирования: {ex.Status.Detail}",
+                "GRPC_ERROR",
+                new ResponseMetadata
+                {
+                    RequestId = requestId,
+                    ExecutionTimeMs = stopwatch.ElapsedMilliseconds
+                });
+
+            await SendSseEvent("completed", grpcErrorResponse);
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Ошибка в SSE потоке. RequestId: {RequestId}", requestId);
+            _logger.LogError(ex, "Неожиданная ошибка в SSE потоке. RequestId: {RequestId}", requestId);
 
             var errorResponse = ApiResponse<SearchResultData>.Error(
                 $"Ошибка: {ex.Message}",

@@ -225,21 +225,15 @@ export const AddressSearchRedux = ({ onSelectResult }: AddressSearchReduxProps) 
                 onClick={() => handleResultClick(result)}
               >
                 <div className="result-name">
-                  {result.locality}, {result.street} {result.number}
+                  Адрес: {result.locality}, {result.street} {result.number}
                 </div>
-                {result.additionalInfo?.fullAddress && (
-                  <div className="result-description">
-                    {result.additionalInfo.fullAddress}
-                  </div>
-                )}
                 <div className="result-coordinates">
-                  {result.lat.toFixed(6)}, {result.lon.toFixed(6)}
-                  {result.score > 0 && (
-                    <span className="result-score"> • {(result.score * 100).toFixed(0)}%</span>
-                  )}
+                  Координаты: {result.lat.toFixed(6)}, {result.lon.toFixed(6)}
                 </div>
-                {result.additionalInfo?.district && (
-                  <span className="result-type">{result.additionalInfo.district}</span>
+                {result.score > 0 && (
+                  <div className="result-score">
+                    Релевантность: {(result.score * 100).toFixed(0)}%
+                  </div>
                 )}
               </div>
             ))}

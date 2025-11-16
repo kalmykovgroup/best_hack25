@@ -1,10 +1,9 @@
 using System.Diagnostics;
 using Api.Models.Common;
 using Api.Models.WebSocket;
-using Api.Services.AddressParser;
-using Api.Services.Normalization;
 using Api.Services.RequestManagement;
 using Api.Services.Search;
+using Grpc.Core;
 using Microsoft.AspNetCore.SignalR;
 
 namespace Api.Hubs;
@@ -15,22 +14,16 @@ namespace Api.Hubs;
 public class GeocodeHub : Hub
 {
     private readonly IPythonSearchClient _pythonSearchClient;
-    private readonly IAddressParserClient _addressParserClient;
     private readonly IActiveRequestsManager _requestsManager;
-    private readonly IAddressNormalizer _addressNormalizer;
     private readonly ILogger<GeocodeHub> _logger;
 
     public GeocodeHub(
         IPythonSearchClient pythonSearchClient,
-        IAddressParserClient addressParserClient,
         IActiveRequestsManager requestsManager,
-        IAddressNormalizer addressNormalizer,
         ILogger<GeocodeHub> logger)
     {
         _pythonSearchClient = pythonSearchClient;
-        _addressParserClient = addressParserClient;
         _requestsManager = requestsManager;
-        _addressNormalizer = addressNormalizer;
         _logger = logger;
     }
 
@@ -62,11 +55,11 @@ public class GeocodeHub : Hub
                 ProgressPercent = 10
             }, cts.Token);
 
-            // Валидация запроса
-            if (!_addressNormalizer.IsValid(request.Query))
+            // Простая валидация запроса
+            if (string.IsNullOrWhiteSpace(request.Query))
             {
                 var errorResponse = ApiResponse<SearchResultData>.Error(
-                    "Поисковая строка некорректна",
+                    "Поисковая строка пустая",
                     "INVALID_QUERY",
                     new ResponseMetadata
                     {
@@ -79,37 +72,19 @@ public class GeocodeHub : Hub
                 return;
             }
 
-            // Парсинг и нормализация адреса через Address Parser (libpostal)
-            await Clients.Caller.SendAsync("SearchProgress", new SearchProgress
-            {
-                RequestId = requestId,
-                Status = "normalizing",
-                Message = "Парсинг и нормализация адреса...",
-                ProgressPercent = 25
-            }, cts.Token);
-
-            var normalizeResult = await _addressNormalizer.NormalizeAndParseAsync(request.Query);
-            _logger.LogDebug(
-                "Результат обработки адреса: Normalized={Normalized}, City={City}, Road={Road}, House={House}",
-                normalizeResult.NormalizedAddress,
-                normalizeResult.Components?.City,
-                normalizeResult.Components?.Road,
-                normalizeResult.Components?.HouseNumber);
-
-            // Отправляем прогресс: отправка в Python сервис
+            // Отправляем прогресс: отправка в геокодер (встроенная нормализация + поиск)
             await Clients.Caller.SendAsync("SearchProgress", new SearchProgress
             {
                 RequestId = requestId,
                 Status = "searching",
-                Message = "Поиск в базе данных...",
-                ProgressPercent = 50
+                Message = "Поиск адреса...",
+                ProgressPercent = 30
             }, cts.Token);
 
-            // Вызов Python gRPC сервиса с CancellationToken и структурированными компонентами
+            // Прямой вызов geocode-service
+            // Сервис сам выполняет нормализацию через встроенный libpostal + BM25 поиск
             var grpcResponse = await _pythonSearchClient.SearchAddressAsync(
-                normalizeResult.NormalizedAddress,
-                request.Query, // Оригинальный запрос пользователя
-                normalizeResult.Components, // 🆕 Структурированные компоненты из libpostal
+                request.Query,
                 request.Limit,
                 requestId,
                 cts.Token);
@@ -130,19 +105,19 @@ public class GeocodeHub : Hub
                 ProgressPercent = 90
             }, cts.Token);
 
-            // Проверяем статус ответа от Python
-            if (grpcResponse.Status.Code != Grpc.StatusCode.Ok)
+            // Проверяем, есть ли результаты (нет Status в новом контракте)
+            if (grpcResponse.Objects == null || grpcResponse.Objects.Count == 0)
             {
-                var errorResponse = ApiResponse<SearchResultData>.Error(
-                    grpcResponse.Status.Message,
-                    grpcResponse.Status.Code.ToString(),
+                var notFoundResponse = ApiResponse<SearchResultData>.Error(
+                    "Адрес не найден",
+                    "NOT_FOUND",
                     new ResponseMetadata
                     {
                         RequestId = requestId,
                         ExecutionTimeMs = stopwatch.ElapsedMilliseconds
                     });
 
-                await Clients.Caller.SendAsync("SearchCompleted", errorResponse, cts.Token);
+                await Clients.Caller.SendAsync("SearchCompleted", notFoundResponse, cts.Token);
                 return;
             }
 
@@ -150,7 +125,7 @@ public class GeocodeHub : Hub
             var searchResultData = new SearchResultData
             {
                 SearchedAddress = grpcResponse.SearchedAddress,
-                TotalFound = grpcResponse.TotalFound,
+                TotalFound = grpcResponse.Metadata?.TotalFound ?? grpcResponse.Objects.Count,
                 Objects = grpcResponse.Objects.Select(obj => new AddressObjectDto
                 {
                     Locality = obj.Locality,
@@ -159,15 +134,10 @@ public class GeocodeHub : Hub
                     Lon = obj.Lon,
                     Lat = obj.Lat,
                     Score = obj.Score,
-                    AdditionalInfo = obj.AdditionalInfo != null
-                        ? new AddressAdditionalInfo
-                        {
-                            PostalCode = obj.AdditionalInfo.PostalCode,
-                            District = obj.AdditionalInfo.District,
-                            FullAddress = obj.AdditionalInfo.FullAddress,
-                            ObjectId = obj.AdditionalInfo.ObjectId
-                        }
-                        : null
+                    AdditionalInfo = obj.Tags?.Count > 0 ? new AddressAdditionalInfo
+                    {
+                        Tags = obj.Tags.ToDictionary(kvp => kvp.Key, kvp => kvp.Value)
+                    } : null
                 }).ToList()
             };
 
@@ -204,9 +174,54 @@ public class GeocodeHub : Hub
 
             await Clients.Caller.SendAsync("SearchCompleted", cancelledResponse);
         }
+        catch (RpcException ex) when (ex.StatusCode == StatusCode.Unavailable)
+        {
+            _logger.LogWarning("geocode-service недоступен для запроса {RequestId}", requestId);
+
+            var serviceUnavailableResponse = ApiResponse<SearchResultData>.Error(
+                "Сервис геокодирования временно недоступен. Пожалуйста, подождите...",
+                "SERVICE_UNAVAILABLE",
+                new ResponseMetadata
+                {
+                    RequestId = requestId,
+                    ExecutionTimeMs = stopwatch.ElapsedMilliseconds
+                });
+
+            await Clients.Caller.SendAsync("SearchCompleted", serviceUnavailableResponse);
+        }
+        catch (RpcException ex) when (ex.StatusCode == StatusCode.DeadlineExceeded)
+        {
+            _logger.LogWarning("Таймаут при вызове geocode-service для запроса {RequestId}", requestId);
+
+            var timeoutResponse = ApiResponse<SearchResultData>.Error(
+                "Превышено время ожидания ответа от сервиса геокодирования",
+                "TIMEOUT",
+                new ResponseMetadata
+                {
+                    RequestId = requestId,
+                    ExecutionTimeMs = stopwatch.ElapsedMilliseconds
+                });
+
+            await Clients.Caller.SendAsync("SearchCompleted", timeoutResponse);
+        }
+        catch (RpcException ex)
+        {
+            _logger.LogError(ex, "Ошибка gRPC при обработке запроса {RequestId}: {StatusCode}", requestId, ex.StatusCode);
+
+            var grpcErrorResponse = ApiResponse<SearchResultData>.Error(
+                $"Ошибка при обращении к сервису геокодирования: {ex.Status.Detail}",
+                "GRPC_ERROR",
+                new ResponseMetadata
+                {
+                    RequestId = requestId,
+                    ExecutionTimeMs = stopwatch.ElapsedMilliseconds
+                });
+
+            await Clients.Caller.SendAsync("SearchCompleted", grpcErrorResponse);
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Ошибка при обработке запроса {RequestId}", requestId);
+            _logger.LogError(ex, "Неожиданная ошибка при обработке запроса {RequestId}", requestId);
 
             var errorResponse = ApiResponse<SearchResultData>.Error(
                 $"Ошибка при выполнении поиска: {ex.Message}",
@@ -264,19 +279,18 @@ public class GeocodeHub : Hub
     }
 
     /// <summary>
-    /// Проверяет статус подключения к Address Parser gRPC сервису (нормализация адресов)
+    /// Проверяет статус Address Parser (не используется, geocode-service делает нормализацию сам)
     /// </summary>
-    /// <returns>True если Address Parser сервис доступен, иначе False</returns>
-    public async Task<bool> CheckAddressParserServiceStatus()
+    /// <returns>Всегда возвращает true (заглушка для совместимости с клиентом)</returns>
+    public Task<bool> CheckAddressParserServiceStatus()
     {
-        _logger.LogDebug("Проверка статуса Address Parser сервиса от клиента {ConnectionId}", Context.ConnectionId);
+        _logger.LogDebug("Проверка статуса Address Parser от клиента {ConnectionId} (заглушка)", Context.ConnectionId);
 
-        var isAvailable = await _addressParserClient.CheckHealthAsync();
-
-        _logger.LogDebug("Статус Address Parser сервиса: {Status}", isAvailable ? "Доступен" : "Недоступен");
-
-        return isAvailable;
+        // Address Parser не используется - geocode-service сам выполняет нормализацию
+        // Возвращаем true чтобы клиент не показывал ошибку
+        return Task.FromResult(true);
     }
+
 
     /// <summary>
     /// Вызывается при подключении клиента

@@ -11,7 +11,11 @@
       "Bash(git stash:*)",
       "mcp__ide__getDiagnostics",
       "Bash(git restore:*)",
-      "Bash(docker compose:*)"
+      "Bash(docker compose:*)",
+      "Bash(taskkill:*)",
+      "Bash(nul)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)"
     ],
     "deny": [],
     "ask": []

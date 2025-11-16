@@ -65,4 +65,9 @@ public class AddressAdditionalInfo
     /// Уникальный идентификатор объекта в БД
     /// </summary>
     public string? ObjectId { get; set; }
+
+    /// <summary>
+    /// Дополнительные OSM теги (name, building, amenity, website и т.д.)
+    /// </summary>
+    public Dictionary<string, string>? Tags { get; set; }
 }

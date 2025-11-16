@@ -1,33 +1,30 @@
 using Api.Grpc;
-using Api.Grpc.AddressParser;
 
 namespace Api.Services.Search;
 
 /// <summary>
-/// Интерфейс для gRPC клиента Python сервиса поиска
+/// Интерфейс для gRPC клиента geocode-service
+/// Сервис выполняет нормализацию и парсинг самостоятельно через встроенный libpostal
 /// </summary>
 public interface IPythonSearchClient
 {
     /// <summary>
-    /// Выполняет поиск адреса через Python gRPC сервис
+    /// Выполняет поиск адреса через geocode-service
+    /// Сервис сам выполняет нормализацию (libpostal) и поиск (BM25 + FTS5)
     /// </summary>
-    /// <param name="normalizedQuery">Нормализованный поисковый запрос</param>
-    /// <param name="originalQuery">Оригинальный запрос пользователя</param>
-    /// <param name="parsedComponents">Структурированные компоненты адреса (из libpostal)</param>
+    /// <param name="query">Поисковая строка адреса (как ввел пользователь)</param>
     /// <param name="limit">Максимальное количество результатов</param>
-    /// <param name="requestId">ID запроса</param>
+    /// <param name="requestId">ID запроса для логирования</param>
     /// <param name="cancellationToken">Токен отмены</param>
     /// <returns>Результаты поиска</returns>
     Task<SearchAddressResponse> SearchAddressAsync(
-        string normalizedQuery,
-        string originalQuery,
-        AddressComponents? parsedComponents,
+        string query,
         int limit,
         string requestId,
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Проверяет доступность Python gRPC сервиса
+    /// Проверяет доступность geocode-service
     /// </summary>
     /// <returns>True если сервис доступен, иначе False</returns>
     Task<bool> CheckHealthAsync();

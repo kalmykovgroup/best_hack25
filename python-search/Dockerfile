@@ -57,9 +57,9 @@ COPY 10-moscow.osm.pbf /data/10-moscow.osm.pbf
 
 # Environment variables
 ENV PBF_PATH=/data/10-moscow.osm.pbf
-ENV GRPC_PORT=50051
+ENV GRPC_PORT=50054
 ENV PYTHONUNBUFFERED=1
 
-EXPOSE 50051
+EXPOSE 50054
 
 CMD ["python", "grpc_server.py"]

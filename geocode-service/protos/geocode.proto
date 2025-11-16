@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package geocode;
+
+option csharp_namespace = "Api.Grpc";
+
+// Сервис геокодирования для хакатона
+service GeocodeService {
+  // Поиск адреса по строке (вход: строка, выход: массив объектов)
+  rpc SearchAddress (SearchAddressRequest) returns (SearchAddressResponse);
+
+  // Health check
+  rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// ============================================================================
+// SearchAddress - основной метод для геокодирования
+// ============================================================================
+
+message SearchAddressRequest {
+  string address = 1;        // Входная строка адреса
+  int32 limit = 2;           // Максимальное количество результатов (default: 10)
+  string algorithm = 3;      // "basic" или "advanced" (default: "advanced")
+  string request_id = 4;     // ID для логирования
+}
+
+message SearchAddressResponse {
+  string searched_address = 1;      // Запрашиваемый адрес (исходный)
+  repeated AddressObject objects = 2; // Найденные объекты
+  ResponseMetadata metadata = 3;    // Метаданные запроса
+}
+
+// Найденный адресный объект (формат хакатона)
+message AddressObject {
+  string locality = 1;  // Наименование населенного пункта
+  string street = 2;    // Наименование улицы
+  string number = 3;    // Номер дома
+  double lon = 4;       // Долгота
+  double lat = 5;       // Широта
+  double score = 6;     // Релевантность ответа (0-1)
+  map<string, string> tags = 7;  // Дополнительные OSM теги (name, building, amenity и т.д.)
+}
+
+// Метаданные ответа
+message ResponseMetadata {
+  int64 execution_time_ms = 1;  // Время выполнения
+  int64 timestamp = 2;          // Timestamp
+  string algorithm_used = 3;    // Использованный алгоритм
+  int32 total_found = 4;        // Всего найдено
+  DebugInfo debug_info = 5;     // Отладочная информация
+}
+
+// Отладочная информация
+message DebugInfo {
+  string corrected_address = 1;     // После address-corrector
+  AddressComponents parsed = 2;     // После address-parser
+  string normalization_method = 3;  // Метод нормализации
+  double levenstein_score = 4;      // Оценка Левенштейна (если применимо)
+}
+
+// Компоненты адреса
+message AddressComponents {
+  string city = 1;
+  string road = 2;
+  string house_number = 3;
+  string postcode = 4;
+  string suburb = 5;
+}
+
+// ============================================================================
+// HealthCheck
+// ============================================================================
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  string status = 1;           // "ok" или "error"
+  int64 database_size = 2;     // Количество записей в БД
+  bool corrector_available = 3; // Доступен ли address-corrector
+  bool parser_available = 4;    // Доступен ли address-parser
+}

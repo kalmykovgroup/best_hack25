@@ -1,0 +1,231 @@
+syntax = "proto3";
+
+option csharp_namespace = "Api.Grpc.AddressParser";
+
+package addressparser;
+
+// Сервис парсинга адресов с использованием libpostal
+service AddressParserService {
+  // Парсинг адреса на компоненты
+  rpc ParseAddress (ParseAddressRequest) returns (ParseAddressResponse);
+
+  // Нормализация адреса (приведение к стандартному виду)
+  rpc NormalizeAddress (NormalizeAddressRequest) returns (NormalizeAddressResponse);
+
+  // Health check для мониторинга
+  rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// ============================================================================
+// Парсинг адреса
+// ============================================================================
+
+// Запрос на парсинг адреса
+message ParseAddressRequest {
+  // Строка адреса для парсинга
+  string address = 1;
+
+  // Код страны для улучшения точности парсинга (ISO 3166-1 alpha-2, например "RU")
+  string country = 2;
+
+  // Язык адреса для улучшения парсинга (ISO 639-1, например "ru")
+  string language = 3;
+
+  // ID сессии/запроса для трекинга и логирования
+  string request_id = 4;
+}
+
+// Ответ с распарсенным адресом
+message ParseAddressResponse {
+  // Статус выполнения запроса
+  ResponseStatus status = 1;
+
+  // Исходный адрес
+  string original_address = 2;
+
+  // Распарсенные компоненты адреса
+  AddressComponents components = 3;
+
+  // Метаданные запроса
+  ResponseMetadata metadata = 4;
+}
+
+// Компоненты адреса (результат парсинга libpostal)
+message AddressComponents {
+  // Дом (house_number)
+  string house_number = 1;
+
+  // Улица (road)
+  string road = 2;
+
+  // Единица/квартира (unit)
+  string unit = 3;
+
+  // Уровень/этаж (level)
+  string level = 4;
+
+  // Подъезд/лестница (staircase)
+  string staircase = 5;
+
+  // Вход (entrance)
+  string entrance = 6;
+
+  // Почтовый ящик (po_box)
+  string po_box = 7;
+
+  // Почтовый индекс (postcode)
+  string postcode = 8;
+
+  // Пригород/микрорайон (suburb)
+  string suburb = 9;
+
+  // Город (city)
+  string city = 10;
+
+  // Округ/район (city_district)
+  string city_district = 11;
+
+  // Округ (county)
+  string county = 12;
+
+  // Штат/область/регион (state)
+  string state = 13;
+
+  // Округ штата (state_district)
+  string state_district = 14;
+
+  // Страна (country)
+  string country = 15;
+
+  // Регион страны (country_region)
+  string country_region = 16;
+
+  // Остров (island)
+  string island = 17;
+
+  // Категория места (world_region)
+  string world_region = 18;
+
+  // Ближайшая точка интереса (near)
+  string near = 19;
+}
+
+// ============================================================================
+// Нормализация адреса
+// ============================================================================
+
+// Запрос на нормализацию адреса
+message NormalizeAddressRequest {
+  // Строка адреса для нормализации
+  string address = 1;
+
+  // Код страны (ISO 3166-1 alpha-2)
+  string country = 2;
+
+  // Язык адреса (ISO 639-1)
+  string language = 3;
+
+  // ID сессии/запроса для трекинга и логирования
+  string request_id = 4;
+
+  // Опции нормализации
+  NormalizeOptions options = 5;
+}
+
+// Опции нормализации
+message NormalizeOptions {
+  // Транслитерировать в латиницу (для кириллицы)
+  bool transliterate = 1;
+
+  // Удалить знаки препинания
+  bool remove_punctuation = 2;
+
+  // Привести к нижнему регистру
+  bool lowercase = 3;
+}
+
+// Ответ с нормализованным адресом
+message NormalizeAddressResponse {
+  // Статус выполнения запроса
+  ResponseStatus status = 1;
+
+  // Исходный адрес
+  string original_address = 2;
+
+  // Нормализованный адрес
+  string normalized_address = 3;
+
+  // Список вариантов нормализации (libpostal может дать несколько вариантов)
+  repeated string alternatives = 4;
+
+  // Метаданные запроса
+  ResponseMetadata metadata = 5;
+}
+
+// ============================================================================
+// Общие типы
+// ============================================================================
+
+// Статус выполнения запроса
+message ResponseStatus {
+  // Код статуса
+  StatusCode code = 1;
+
+  // Сообщение (для ошибок или предупреждений)
+  string message = 2;
+
+  // Детали ошибки (опционально, для отладки)
+  string details = 3;
+}
+
+// Коды статуса
+enum StatusCode {
+  OK = 0;                          // Успешное выполнение
+  INVALID_REQUEST = 1;             // Некорректный запрос
+  NOT_FOUND = 2;                   // Ничего не найдено
+  INTERNAL_ERROR = 3;              // Внутренняя ошибка сервера
+  TIMEOUT = 4;                     // Превышено время ожидания
+  DATABASE_ERROR = 5;              // Ошибка базы данных
+  CANCELLED = 6;                   // Запрос отменен
+  SERVICE_UNAVAILABLE = 7;         // Сервис недоступен
+}
+
+// Метаданные ответа
+message ResponseMetadata {
+  // Время выполнения запроса в миллисекундах
+  int64 execution_time_ms = 1;
+
+  // Timestamp обработки запроса
+  int64 timestamp = 2;
+
+  // Версия парсера
+  string parser_version = 3;
+}
+
+// ============================================================================
+// Health Check
+// ============================================================================
+
+message HealthCheckRequest {
+  // Пустой запрос
+}
+
+message HealthCheckResponse {
+  // Статус здоровья сервиса
+  HealthStatus status = 1;
+
+  // Версия сервиса
+  string version = 2;
+
+  // Время работы сервиса в секундах
+  int64 uptime_seconds = 3;
+
+  // Версия libpostal
+  string libpostal_version = 4;
+}
+
+enum HealthStatus {
+  HEALTHY = 0;
+  DEGRADED = 1;
+  UNHEALTHY = 2;
+}

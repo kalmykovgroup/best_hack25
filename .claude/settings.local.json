@@ -17,7 +17,20 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git push:*)",
-      "Bash(git update-index:*)"
+      "Bash(git update-index:*)",
+      "Bash(docker compose:*)",
+      "Bash(timeout 60 docker compose:*)",
+      "Bash(dir:*)",
+      "Bash(findstr:*)",
+      "Bash(docker stop:*)",
+      "Bash(docker rm:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker volume rm:*)",
+      "Bash(timeout 5 curl:*)",
+      "Bash(curl:*)",
+      "Bash(timeout 5 docker compose:*)",
+      "Bash(npm run build:*)",
+      "Bash(timeout 10 docker compose:*)"
     ],
     "deny": [],
     "ask": []

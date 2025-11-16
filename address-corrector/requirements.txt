@@ -1,0 +1,5 @@
+grpcio==1.60.0
+grpcio-tools==1.60.0
+postal==1.1.10
+fuzzywuzzy==0.18.0
+python-Levenshtein==0.25.0

@@ -1,0 +1,223 @@
+syntax = "proto3";
+
+option csharp_namespace = "Api.Grpc.AddressCorrector";
+
+package addresscorrector;
+
+// Сервис коррекции адресов с использованием libpostal и SQLite базы OSM
+service AddressCorrectorService {
+  // Коррекция неверного ввода адреса
+  rpc CorrectAddress (CorrectAddressRequest) returns (CorrectAddressResponse);
+
+  // Health check для мониторинга
+  rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// ============================================================================
+// Коррекция адреса
+// ============================================================================
+
+// Запрос на коррекцию адреса
+message CorrectAddressRequest {
+  // Исходная строка адреса (возможно с ошибками)
+  string original_address = 1;
+
+  // Максимальное количество вариантов коррекции (по умолчанию 5)
+  int32 max_suggestions = 2;
+
+  // Минимальный порог схожести (0-1, по умолчанию 0.5)
+  double min_similarity = 3;
+
+  // Опции коррекции
+  CorrectionOptions options = 4;
+
+  // ID сессии/запроса для трекинга и логирования
+  string request_id = 5;
+}
+
+// Опции коррекции
+message CorrectionOptions {
+  // Язык адреса (ISO 639-1, например "ru")
+  string language = 1;
+
+  // Код страны (ISO 3166-1 alpha-2, например "RU")
+  string country = 2;
+
+  // Использовать только точные совпадения
+  bool strict_mode = 3;
+
+  // Включить нормализацию через libpostal
+  bool enable_normalization = 4;
+}
+
+// Ответ с коррекцией адреса
+message CorrectAddressResponse {
+  // Статус выполнения запроса
+  ResponseStatus status = 1;
+
+  // Исходный адрес (как был передан в запросе)
+  string original_address = 2;
+
+  // Скорректированный адрес (лучший вариант)
+  string corrected_address = 3;
+
+  // Список альтернативных вариантов коррекции
+  repeated CorrectionSuggestion suggestions = 4;
+
+  // Была ли выполнена коррекция (false если адрес был корректным)
+  bool was_corrected = 5;
+
+  // Метаданные запроса
+  ResponseMetadata metadata = 6;
+}
+
+// Вариант коррекции адреса
+message CorrectionSuggestion {
+  // Скорректированная строка адреса
+  string corrected_address = 1;
+
+  // Оценка схожести с оригиналом (0-1, где 1 - точное совпадение)
+  double similarity_score = 2;
+
+  // Компоненты адреса (результат парсинга через libpostal)
+  AddressComponents components = 3;
+
+  // Координаты (если найдены в базе)
+  Coordinates coordinates = 4;
+
+  // Источник коррекции
+  CorrectionSource source = 5;
+}
+
+// Компоненты адреса
+message AddressComponents {
+  // Номер дома
+  string house_number = 1;
+
+  // Улица
+  string road = 2;
+
+  // Квартира/офис
+  string unit = 3;
+
+  // Почтовый индекс
+  string postcode = 4;
+
+  // Район/микрорайон
+  string suburb = 5;
+
+  // Город
+  string city = 6;
+
+  // Округ города
+  string city_district = 7;
+
+  // Регион/область
+  string state = 8;
+
+  // Страна
+  string country = 9;
+}
+
+// Координаты объекта
+message Coordinates {
+  // Широта
+  double lat = 1;
+
+  // Долгота
+  double lon = 2;
+}
+
+// Источник коррекции
+enum CorrectionSource {
+  UNKNOWN = 0;              // Неизвестный источник
+  LIBPOSTAL_NORMALIZATION = 1;  // Нормализация через libpostal
+  SQLITE_DATABASE = 2;      // Найдено в SQLite базе OSM
+  FUZZY_MATCH = 3;          // Нечеткое совпадение
+  EXACT_MATCH = 4;          // Точное совпадение
+}
+
+// ============================================================================
+// Общие типы
+// ============================================================================
+
+// Статус выполнения запроса
+message ResponseStatus {
+  // Код статуса
+  StatusCode code = 1;
+
+  // Сообщение (для ошибок или предупреждений)
+  string message = 2;
+
+  // Детали ошибки (опционально, для отладки)
+  string details = 3;
+}
+
+// Коды статуса
+enum StatusCode {
+  OK = 0;                          // Успешное выполнение
+  INVALID_REQUEST = 1;             // Некорректный запрос
+  NOT_FOUND = 2;                   // Ничего не найдено
+  INTERNAL_ERROR = 3;              // Внутренняя ошибка сервера
+  TIMEOUT = 4;                     // Превышено время ожидания
+  DATABASE_ERROR = 5;              // Ошибка базы данных
+  CANCELLED = 6;                   // Запрос отменен
+  SERVICE_UNAVAILABLE = 7;         // Сервис недоступен
+}
+
+// Метаданные ответа
+message ResponseMetadata {
+  // Время выполнения запроса в миллисекундах
+  int64 execution_time_ms = 1;
+
+  // Timestamp обработки запроса
+  int64 timestamp = 2;
+
+  // Версия сервиса коррекции
+  string corrector_version = 3;
+
+  // Количество проверенных вариантов
+  int32 variants_checked = 4;
+}
+
+// ============================================================================
+// Health Check
+// ============================================================================
+
+message HealthCheckRequest {
+  // Пустой запрос
+}
+
+message HealthCheckResponse {
+  // Статус здоровья сервиса
+  HealthStatus status = 1;
+
+  // Версия сервиса
+  string version = 2;
+
+  // Время работы сервиса в секундах
+  int64 uptime_seconds = 3;
+
+  // Версия libpostal
+  string libpostal_version = 4;
+
+  // Статус подключения к базе данных
+  DatabaseStatus database_status = 5;
+}
+
+enum HealthStatus {
+  HEALTHY = 0;
+  DEGRADED = 1;
+  UNHEALTHY = 2;
+}
+
+message DatabaseStatus {
+  // Подключена ли база данных
+  bool connected = 1;
+
+  // Количество записей в базе
+  int64 total_records = 2;
+
+  // Путь к базе данных
+  string database_path = 3;
+}

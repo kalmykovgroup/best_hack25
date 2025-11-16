@@ -15,7 +15,12 @@
       "Bash(timeout 10 sleep:*)",
       "Bash(python test_russian.py:*)",
       "Bash(docker cp:*)",
-      "WebFetch(domain:www.alta.ru)"
+      "WebFetch(domain:www.alta.ru)",
+      "Bash(docker build:*)",
+      "Bash(docker run:*)",
+      "Bash(docker rm:*)",
+      "Bash(docker ps:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []

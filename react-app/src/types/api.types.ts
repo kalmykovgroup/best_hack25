@@ -36,6 +36,7 @@ export interface AddressAdditionalInfo {
   district?: string;
   fullAddress?: string;
   objectId?: string;
+  tags?: Record<string, string>; // OSM теги (name, building, website, и т.д.)
 }
 
 export interface GeocodeRequest {

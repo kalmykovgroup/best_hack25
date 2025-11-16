@@ -80,17 +80,12 @@ jobs:
           # CORS
           ALLOWED_ORIGINS=https://${{ secrets.DOMAIN }},http://${{ secrets.DOMAIN }}
 
-          # Python Geocode Service
-          GEOCODE_SERVICE_PORT=50051
-          GEOCODE_SERVICE_GRPC_PORT=50051
-
-          # Address Parser Service
-          ADDRESS_PARSER_PORT=50052
-          ADDRESS_PARSER_GRPC_PORT=50052
+          # Geocode Service (BM25 search + встроенный libpostal)
+          GEOCODE_SERVICE_PORT=50054
+          GEOCODE_SERVICE_GRPC_PORT=50054
 
           # Service URLs
-          PYTHON_SERVICE_URL=http://geocode-service:50051
-          ADDRESS_PARSER_URL=http://address-parser:50052
+          PYTHON_SERVICE_URL=http://geocode-service:50054
 
           # Performance
           ENABLE_VERBOSE_LOGGING=0
@@ -106,7 +101,7 @@ jobs:
 
           # Собираем и запускаем новые контейнеры
           echo "Building and starting containers..."
-          docker compose up -d --build --wait --wait-timeout 900
+          docker compose up -d --build
 
           # Проверяем статус
           echo "Checking container status..."

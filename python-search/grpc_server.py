@@ -87,12 +87,41 @@ def setup_geocoder(pbf_path: str):
     - builds address index
     - builds BM25 retriever
     Returns: (index_df, retriever, spell)
+
+    Использует кэширование для экономии памяти и времени загрузки
     """
-    logger.info("Loading OSM data from %s", pbf_path)
+    import pickle
+    import hashlib
+
+    # Путь к кэш файлу
+    cache_dir = os.environ.get("CACHE_DIR", "/tmp/geocoder_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+
+    # Генерируем хэш от имени файла для имени кэша
+    pbf_hash = hashlib.md5(pbf_path.encode()).hexdigest()[:8]
+    cache_file = os.path.join(cache_dir, f"index_{pbf_hash}.pkl")
+
+    # Пробуем загрузить из кэша
+    if os.path.exists(cache_file):
+        logger.info("Loading geocoder index from cache: %s", cache_file)
+        try:
+            with open(cache_file, "rb") as f:
+                index_df, retriever, spell = pickle.load(f)
+            logger.info("Geocoder index loaded from cache: %d documents", len(index_df))
+            return index_df, retriever, spell
+        except Exception as e:
+            logger.warning("Failed to load cache, rebuilding: %s", e)
+
+    # Кэш не найден или поврежден - строим индекс
+    logger.info("Loading OSM data from %s (this may take several minutes)", pbf_path)
     osm = OSM(pbf_path)
     buildings = osm.get_buildings()
 
     df = buildings.copy()
+    # Освобождаем память
+    del buildings
+    del osm
+
     # Primary key
     df["building_pk"] = df.index
 
@@ -105,8 +134,11 @@ def setup_geocoder(pbf_path: str):
     df = df[df["raw_address"].notna()].reset_index(drop=True)
 
     # Build index table: one row per (building, normalized_string)
+    logger.info("Building address index...")
     index_rows = []
     for idx, row in df.iterrows():
+        if idx % 1000 == 0:
+            logger.info("Processed %d/%d buildings", idx, len(df))
         expansions = normalized_forms(row["raw_address"])
         for norm in set(expansions):
             index_rows.append(
@@ -119,17 +151,35 @@ def setup_geocoder(pbf_path: str):
             )
 
     index_df = pd.DataFrame(index_rows)
+    # Освобождаем память
+    del df
+    del index_rows
 
     # BM25 index
+    logger.info("Building BM25 index...")
     corpus = index_df["norm_address"].tolist()
     corpus_tokens = bm25s.tokenize(corpus)
 
     retriever = bm25s.BM25()
     retriever.index(corpus_tokens)
 
+    # Освобождаем память
+    del corpus
+    del corpus_tokens
+
     spell = Speller("ru")
 
     logger.info("Geocoder index built: %d documents", len(index_df))
+
+    # Сохраняем в кэш
+    try:
+        logger.info("Saving index to cache: %s", cache_file)
+        with open(cache_file, "wb") as f:
+            pickle.dump((index_df, retriever, spell), f, protocol=pickle.HIGHEST_PROTOCOL)
+        logger.info("Index saved to cache")
+    except Exception as e:
+        logger.warning("Failed to save cache: %s", e)
+
     return index_df, retriever, spell
 
 

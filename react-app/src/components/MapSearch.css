@@ -52,7 +52,6 @@
 /* Map Search */
 .map-search {
   width: 100%;
-  max-width: 800px;
   margin: 0 auto;
   font-family: system-ui, -apple-system, sans-serif;
 }
@@ -60,7 +59,6 @@
 .search-header {
   margin-bottom: 0;
   display: flex;
-  justify-content: center;
   align-items: center;
   gap: 1rem;
 }
@@ -68,11 +66,13 @@
 .search-input-wrapper {
   position: relative;
   margin-bottom: 0;
-  width: 700px;
+  flex: 1;
+  min-width: 350px;
 }
 
 .search-input {
   width: 100%;
+  min-width: 350px;
   padding: 12px 12px 12px 16px;
   font-size: 16px;
   border: 2px solid #e0e0e0;
@@ -185,8 +185,9 @@
 }
 
 .result-score {
-  color: #4caf50;
-  font-weight: 600;
+  font-size: 14px;
+  color: #666;
+  margin-top: 4px;
 }
 
 .search-info {
@@ -214,10 +215,6 @@
 }
 
 .search-header .cache-checkbox {
-  position: absolute;
-  right: -82px;
-  top: 50%;
-  transform: translateY(-50%);
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -226,7 +223,6 @@
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
-  z-index: 10;
 }
 
 .cache-checkbox input[type="checkbox"] {

@@ -47,76 +47,152 @@ services:
     build:
       context: ./api
       dockerfile: Dockerfile
-    expose:
-      - "8080"
+    ports:
+      - "5000:8080"
     environment:
       - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Production}
       - ASPNETCORE_URLS=http://+:8080
-      - PythonService__Url=${PYTHON_SERVICE_URL:-http://geocode-service:50051}
-      - AddressParserService__Url=${ADDRESS_PARSER_URL:-http://address-parser:50052}
+      - PYTHON_SERVICE_URL=${PYTHON_SERVICE_URL:-http://geocode-service:50054}
       - ASPNETCORE_FORWARDEDHEADERS_ENABLED=true
-      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5175}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5000,http://localhost:5175,http://localhost:3000}
     depends_on:
       geocode-service:
         condition: service_healthy
-      address-parser:
-        condition: service_healthy
     networks:
       - app-network
 
-  # Python Geocode сервис (поиск адресов)
-  geocode-service:
-    container_name: geocode-service
+  # OSM SQLite сервис (конвертирует OSM → SQLite)
+  osm-db:
+    container_name: osm-db
     build:
-      context: ./python-search
+      context: ./sqlLiteBuilder
       dockerfile: Dockerfile
     ports:
-      - "${GEOCODE_SERVICE_PORT:-50051}:50051"
+      - "${OSM_DB_PORT:-8091}:8091"
     environment:
-      - GRPC_PORT=${GEOCODE_SERVICE_GRPC_PORT:-50051}
       - PYTHONUNBUFFERED=1
     networks:
       - app-network
-    # Первый запуск требует много времени (загрузка libpostal + индексация OSM)
-    mem_limit: 6g
-    mem_reservation: 2g
+    volumes:
+      # Общая БД для всех сервисов
+      - osm-db-data:/data/db
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
     healthcheck:
-      test: ["CMD", "python", "-c", "import grpc; channel = grpc.insecure_channel('localhost:50051'); channel.close()"]
+      test: ["CMD", "curl", "-f", "http://localhost:8091/health"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 600s  # 10 минут на первый запуск
+      retries: 3
+      start_period: 300s  # 5 минут на первую конвертацию
 
-  # Address Parser сервис (libpostal)
+  # Address Parser (libpostal для парсинга адресов)
   address-parser:
     container_name: address-parser
     build:
       context: ./address-parser
       dockerfile: Dockerfile
     ports:
-      - "${ADDRESS_PARSER_PORT:-50052}:50052"
+      - "50052:50052"
     environment:
-      - GRPC_PORT=${ADDRESS_PARSER_GRPC_PORT:-50052}
       - PYTHONUNBUFFERED=1
+    restart: unless-stopped
     networks:
       - app-network
-    # libpostal требует много памяти при загрузке данных
-    mem_limit: 6g
-    mem_reservation: 2g
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
     healthcheck:
       test: ["CMD", "python", "-c", "import grpc; channel = grpc.insecure_channel('localhost:50052'); channel.close()"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 600s  # 10 минут на первый запуск
+      start_period: 60s
+
+  # Address Corrector (исправление опечаток с libpostal)
+  address-corrector:
+    container_name: address-corrector
+    build:
+      context: ./address-corrector
+      dockerfile: Dockerfile
+    ports:
+      - "50053:50053"
     volumes:
-      # Кэшируем данные libpostal для быстрого перезапуска
-      - libpostal-data:/usr/local/share/libpostal
+      - osm-db-data:/data/db
+    environment:
+      - DB_PATH=/data/db/moscow.db
+      - PYTHONUNBUFFERED=1
+      - GRPC_PORT=50053
+    depends_on:
+      osm-db:
+        condition: service_healthy
+      address-parser:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import grpc; channel = grpc.insecure_channel('localhost:50053'); channel.close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Geocode сервис (хакатон - FTS5 + Levenshtein)
+  geocode-service:
+    container_name: geocode-service
+    build:
+      context: ./geocode-service
+      dockerfile: Dockerfile
+    ports:
+      - "50054:50054"
+    volumes:
+      # Использует БД от osm-db (read-write для инициализации таблиц)
+      - osm-db-data:/data/db
+    environment:
+      - DB_PATH=/data/db/moscow.db
+      - PYTHONUNBUFFERED=1
+      - ADDRESS_PARSER_URL=address-parser:50052
+      - ADDRESS_CORRECTOR_URL=address-corrector:50053
+    depends_on:
+      osm-db:
+        condition: service_healthy
+      address-parser:
+        condition: service_healthy
+      address-corrector:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import grpc; channel = grpc.insecure_channel('localhost:50054'); channel.close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
 networks:
   app-network:
     driver: bridge
 
 volumes:
-  libpostal-data:
+  osm-db-data:
     driver: local

@@ -1,8 +1,5 @@
 using Api.Grpc;
-using Api.Grpc.AddressParser;
 using Api.Hubs;
-using Api.Services.AddressParser;
-using Api.Services.Normalization;
 using Api.Services.RequestManagement;
 using Api.Services.Search;
 
@@ -47,10 +44,9 @@ public class Program
             options.MaximumReceiveMessageSize = maxMessageSize; // 100KB
         });
 
-        // Настройка gRPC клиента для Python сервиса (геокодирование)
+        // Настройка gRPC клиента для Geocode сервиса (python-search с BM25 + встроенным libpostal)
         var pythonServiceUrl = builder.Configuration.GetValue<string>("PYTHON_SERVICE_URL")
-                               ?? builder.Configuration.GetValue<string>("PythonService:Url")
-                               ?? "http://localhost:50051";
+                               ?? "http://localhost:50054";
 
         builder.Services.AddGrpcClient<GeocodeService.GeocodeServiceClient>(options =>
         {
@@ -71,33 +67,9 @@ public class Program
             return handler;
         });
 
-        // Настройка gRPC клиента для Address Parser сервиса (нормализация адресов)
-        var addressParserServiceUrl = builder.Configuration.GetValue<string>("ADDRESS_PARSER_SERVICE_URL")
-                                      ?? builder.Configuration.GetValue<string>("AddressParserService:Url")
-                                      ?? "http://localhost:50052";
-
-        builder.Services.AddGrpcClient<AddressParserService.AddressParserServiceClient>(options =>
-        {
-            options.Address = new Uri(addressParserServiceUrl);
-        })
-        .ConfigurePrimaryHttpMessageHandler(() =>
-        {
-            var handler = new HttpClientHandler();
-
-            if (builder.Environment.IsDevelopment())
-            {
-                handler.ServerCertificateCustomValidationCallback =
-                    HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
-            }
-
-            return handler;
-        });
-
-        // Регистрация наших сервисов
+        // Регистрация сервисов
         builder.Services.AddScoped<IPythonSearchClient, PythonSearchClient>();
-        builder.Services.AddScoped<IAddressParserClient, AddressParserClient>();
         builder.Services.AddSingleton<IActiveRequestsManager, ActiveRequestsManager>();
-        builder.Services.AddScoped<IAddressNormalizer, AddressNormalizer>();
 
         var app = builder.Build();
 
@@ -154,7 +126,7 @@ public class Program
 
         using var scope = app.Services.CreateScope();
 
-        // Проверка Python Geocode Service
+        // Проверка Geocode Service (python-search с BM25 + встроенным libpostal)
         try
         {
             var pythonClient = scope.ServiceProvider.GetRequiredService<IPythonSearchClient>();
@@ -162,39 +134,18 @@ public class Program
 
             if (isPythonHealthy)
             {
-                logger.LogInformation("✅ Python Geocode Service (порт 50051):    ПОДКЛЮЧЕН");
+                logger.LogInformation("✅ Geocode Service (порт 50054):    ПОДКЛЮЧЕН");
+                logger.LogInformation("    (BM25 поиск + встроенный libpostal)");
             }
             else
             {
-                logger.LogWarning("⚠️  Python Geocode Service (порт 50051):    НЕДОСТУПЕН");
-                logger.LogWarning("    Проверьте, что сервис запущен: python-search/grpc_server.py");
+                logger.LogWarning("⚠️  Geocode Service (порт 50054):    НЕДОСТУПЕН");
+                logger.LogWarning("    Проверьте, что сервис запущен: docker-compose up geocode-service");
             }
         }
         catch (Exception ex)
         {
-            logger.LogError("❌ Python Geocode Service (порт 50051):    ОШИБКА ПОДКЛЮЧЕНИЯ");
-            logger.LogError("    {Message}", ex.Message);
-        }
-
-        // Проверка Address Parser Service
-        try
-        {
-            var addressParserClient = scope.ServiceProvider.GetRequiredService<IAddressParserClient>();
-            var isAddressParserHealthy = await addressParserClient.CheckHealthAsync();
-
-            if (isAddressParserHealthy)
-            {
-                logger.LogInformation("✅ Address Parser Service (порт 50052):    ПОДКЛЮЧЕН");
-            }
-            else
-            {
-                logger.LogWarning("⚠️  Address Parser Service (порт 50052):    НЕДОСТУПЕН");
-                logger.LogWarning("    Проверьте, что сервис запущен: docker-compose up address-parser");
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogError("❌ Address Parser Service (порт 50052):    ОШИБКА ПОДКЛЮЧЕНИЯ");
+            logger.LogError("❌ Geocode Service (порт 50054):    ОШИБКА ПОДКЛЮЧЕНИЯ");
             logger.LogError("    {Message}", ex.Message);
         }
 

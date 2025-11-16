@@ -17,29 +17,49 @@ function App() {
     <div className="app">
       <h1>BEST HACK</h1>
 
-      <AddressSearchRedux onSelectResult={handleSelectResult} />
+      <div className={`layout ${selectedResult ? 'has-selection' : ''}`}>
+        <div className="left-panel">
+          <AddressSearchRedux onSelectResult={handleSelectResult} />
+        </div>
 
-      {selectedResult && (
-        <div className="selected-result">
-          <h2>Выбранный адрес:</h2>
-          <div className="result-details">
-            <p><strong>Адрес:</strong> {selectedResult.locality}, {selectedResult.street} {selectedResult.number}</p>
-            {selectedResult.additionalInfo?.fullAddress && (
-              <p><strong>Полный адрес:</strong> {selectedResult.additionalInfo.fullAddress}</p>
-            )}
-            <p><strong>Координаты:</strong> {selectedResult.lat.toFixed(6)}, {selectedResult.lon.toFixed(6)}</p>
-            {selectedResult.additionalInfo?.postalCode && (
-              <p><strong>Индекс:</strong> {selectedResult.additionalInfo.postalCode}</p>
-            )}
-            {selectedResult.additionalInfo?.district && (
-              <p><strong>Район:</strong> {selectedResult.additionalInfo.district}</p>
-            )}
-            {selectedResult.score > 0 && (
-              <p><strong>Релевантность:</strong> {(selectedResult.score * 100).toFixed(0)}%</p>
+        <div className={`right-panel ${selectedResult ? 'visible' : ''}`}>
+          <div className="selected-result">
+            {selectedResult && (
+              <>
+                <h2>Выбранный адрес:</h2>
+                <div className="result-details">
+                  <p><strong>Адрес:</strong> {selectedResult.locality}, {selectedResult.street} {selectedResult.number}</p>
+                  {selectedResult.additionalInfo?.fullAddress && (
+                    <p><strong>Полный адрес:</strong> {selectedResult.additionalInfo.fullAddress}</p>
+                  )}
+                  <p><strong>Координаты:</strong> {selectedResult.lat.toFixed(6)}, {selectedResult.lon.toFixed(6)}</p>
+                  {selectedResult.additionalInfo?.postalCode && (
+                    <p><strong>Индекс:</strong> {selectedResult.additionalInfo.postalCode}</p>
+                  )}
+                  {selectedResult.additionalInfo?.district && (
+                    <p><strong>Район:</strong> {selectedResult.additionalInfo.district}</p>
+                  )}
+                  {selectedResult.score > 0 && (
+                    <p><strong>Релевантность:</strong> {(selectedResult.score * 100).toFixed(0)}%</p>
+                  )}
+                  {selectedResult.additionalInfo?.tags && Object.keys(selectedResult.additionalInfo.tags).length > 0 && (
+                    <div className="tags-section">
+                      <p><strong>OSM теги:</strong></p>
+                      <div className="tags-list">
+                        {Object.entries(selectedResult.additionalInfo.tags).map(([key, value]) => (
+                          <p key={key} className="tag-item">
+                            <span className="tag-key">{key}:</span> {value}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
             )}
           </div>
         </div>
-      )}
+      </div>
     </div>
   )
 }
